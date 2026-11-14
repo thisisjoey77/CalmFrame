@@ -56,7 +56,7 @@ let lowFps = 0
 
 function setSwitch(on: boolean): void {
   protectionSwitch.setAttribute('aria-checked', String(on))
-  protectionLabel.textContent = on ? 'Protection on' : 'Protection off'
+  protectionLabel.textContent = on ? 'On' : 'Off'
 }
 
 function renderStatus(): void {
@@ -84,7 +84,7 @@ function renderStatus(): void {
   // off: the status already says why.
   const lowNow = performance.now() - lowFpsAt < LOW_FPS_WARNING_HOLD_MS && view.status !== 'off'
   if (lowNow) {
-    fpsWarning.textContent = `Screen capture is running at ${lowFps} fps, under ${LOW_FPS_WARNING}. Fast flashing may be caught late. Use mains power and Turbo mode, and close heavy apps.`
+    fpsWarning.textContent = `Capture at ${lowFps} fps, under ${LOW_FPS_WARNING}: fast flashing may be caught late. Use mains power and Turbo mode.`
   }
   fpsWarning.hidden = !lowNow
 }
@@ -171,26 +171,26 @@ function sensitivityText(s: Sensitivity): { name: string; what: string } {
   if (s.trigger === 'strict') {
     return {
       name: 'Strict',
-      what: `Smooths only a clear violation: ${STRICT_TRIGGER_COUNT} fast changes within a second, more than 3 flashes.`
+      what: `Only a clear violation: ${STRICT_TRIGGER_COUNT} fast changes in a second.`
     }
   }
   const position = sensitivityPosition(s)
   const standard = sensitivityPosition(DEFAULT_SETTINGS.sensitivity)
   if (position < standard) {
     return {
-      name: `Most sensitive (${s.streakN} fast changes)`,
-      what: `Smooths on fast change ${s.streakN}. Scene cuts and explosions set it off more often.`
+      name: `Most sensitive, ${s.streakN} changes`,
+      what: `Smooths on fast change ${s.streakN}. Scene cuts set it off more often.`
     }
   }
   if (position === standard) {
     return {
-      name: `Standard (${s.streakN} fast changes)`,
-      what: `Smooths on fast change ${s.streakN}, the default, from the WCAG limit of 3 flashes a second.`
+      name: `Standard, ${s.streakN} changes`,
+      what: `Smooths on fast change ${s.streakN} (the default).`
     }
   }
   return {
-    name: `Fewer false alarms (${s.streakN} fast changes)`,
-    what: `Waits for fast change ${s.streakN}. Fast scrolling, game camera turns and tab switches set it off less often.`
+    name: `Fewer false alarms, ${s.streakN} changes`,
+    what: `Waits for fast change ${s.streakN}. Game camera turns and tab switches set it off less.`
   }
 }
 
@@ -198,7 +198,7 @@ function describeSensitivity(s: Sensitivity): void {
   const { name, what } = sensitivityText(s)
   const seen = predictedFlashesSeen(s).toFixed(1)
   sensitivityName.textContent = name
-  sensitivityDesc.textContent = `${what} Predicted: about ${seen} flashes of a ${SLIDER_EXAMPLE_HZ} Hz strobe reach you before smoothing starts.`
+  sensitivityDesc.textContent = `${what} Predicted: about ${seen} flashes of a ${SLIDER_EXAMPLE_HZ} Hz strobe get through first.`
   slider.setAttribute('aria-valuetext', name)
 }
 
