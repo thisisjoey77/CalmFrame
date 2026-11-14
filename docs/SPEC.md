@@ -733,11 +733,19 @@ Decisions and deviations:
 
 - [ ] Slow-motion counts at 5, 10 and 15 Hz, protection off and on.
 - [x] IRIS comparison table over the clip set. *The 11 synthetic clips. The three to five real clips are not added yet.*
-- [ ] Latency median and 95th percentile from the app's own log.
+- [x] Latency median and 95th percentile from the app's own log. *Captured → overlay drawn: 20 ms median, 28 ms p95 (`measurements/latency.md`).*
 
-#### Phase 6 results so far (Sat Nov 14, overnight, Windows laptop, unattended)
+#### Phase 6 results so far (Sat Nov 14, Windows laptop)
 
-Only the IRIS comparison so far. It needs no screen and no phone. The slow-motion counts and the latency log need the demo laptop in its demo setup and a person.
+The IRIS comparison ran overnight, unattended. The latency log came from the morning slow-motion session. The slow-motion counts are still to come.
+
+- **Latency from the app's log** (`measurements/latency.md`). The run lasted 201 s in demo setup on default settings, with five low-contrast bursts at 5, 10 and 15 Hz. All five were smoothed, with no busy skips.
+  - Captured → decision: 13.8 ms median, 21.9 ms p95.
+  - Decision → overlay drawn: 4.8 ms median, 5.9 ms p95.
+  - **Captured → overlay drawn: 20.4 ms median, 28.0 ms p95.**
+
+  The GPU round trip (callback → grid) is 5.7 ms median, down from 7 to 10 ms in Phase 3. These figures understate the true delay, because `captureTime` is stamped late and the time to reach the glass is left out. Quote the slow-motion figure in the pitch.
+- **Capture rate in the same run:** 50 fps median, 44 at the 10th percentile, range 39 to 59, with 15% of the seconds under 45. Phase 0 measured a mean of 54 with no other apps open. Here VS Code and the browser were open. The warning holds for 5 s after any reading under 45, so it showed for about 47% of the run. A 5 s rolling mean fell under 45 for only 13 s.
 
 - **The validator** (`tools/validate`, Prompt 8) has three steps:
   - `make-clips` writes the 11 clips of "Test clips" as 1080p60 H.264 (CRF 4) with a 3 s lead-in, plus a manifest of the expected results.
