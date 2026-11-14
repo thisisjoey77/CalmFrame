@@ -42,6 +42,8 @@ export class TransitionTracker {
   readonly cells: number
   private readonly threshold: number
   private readonly isRed: boolean
+  private readonly darkLimit = DARK_LIMIT
+  private readonly redRatioLimit = RED_RATIO
 
   // Step 4: the extremum tracker.
   /** IDLE, RISING or FALLING. */
@@ -151,6 +153,12 @@ export class TransitionTracker {
 
     const { dir, ext, low, high, extRatio, lowRatio, highRatio, anchor } = this
     const { lastT, interval, swing, streak, count, ring, ringHead } = this
+    // Constants copied to locals: this loop runs once per cell per frame, and some module
+    // loaders (Vitest's among them) turn every read of an import into a property lookup.
+    const cap = TRACKER_RING_CAPACITY
+    const fastMs = FAST_TRANSITION_INTERVAL_MS
+    const windowMs = COUNT_WINDOW_MS
+    const idleMs = TRACKER_IDLE_RESET_MS
     let transitions = 0
 
     for (let i = 0; i < n; i++) {
@@ -215,19 +223,19 @@ export class TransitionTracker {
         ext[i] = y
         extRatio[i] = rho
         const gap = t - lastT[i]
-        streak[i] = gap <= FAST_TRANSITION_INTERVAL_MS ? streak[i] + 1 : 1
+        streak[i] = gap <= fastMs ? streak[i] + 1 : 1
         interval[i] = gap
         lastT[i] = t
-        const base = i * TRACKER_RING_CAPACITY
+        const base = i * cap
         let c = count[i]
-        if (c === TRACKER_RING_CAPACITY) {
-          ringHead[i] = (ringHead[i] + 1) % TRACKER_RING_CAPACITY
+        if (c === cap) {
+          ringHead[i] = (ringHead[i] + 1) % cap
           c--
         }
-        ring[base + ((ringHead[i] + c) % TRACKER_RING_CAPACITY)] = t
+        ring[base + ((ringHead[i] + c) % cap)] = t
         count[i] = c + 1
         transitions++
-      } else if (d !== IDLE && t - lastT[i] >= TRACKER_IDLE_RESET_MS) {
+      } else if (d !== IDLE && t - lastT[i] >= idleMs) {
         // Rule 6: no transition for 1 s returns the cell to idle at the current value.
         dir[i] = IDLE
         low[i] = high[i] = y
@@ -239,10 +247,10 @@ export class TransitionTracker {
       // Count c: drop transitions that have left the 1 s window.
       let c = count[i]
       if (c > 0) {
-        const base = i * TRACKER_RING_CAPACITY
+        const base = i * cap
         let head = ringHead[i]
-        while (c > 0 && t - ring[base + head] >= COUNT_WINDOW_MS) {
-          head = (head + 1) % TRACKER_RING_CAPACITY
+        while (c > 0 && t - ring[base + head] >= windowMs) {
+          head = (head + 1) % cap
           c--
         }
         ringHead[i] = head
@@ -250,7 +258,7 @@ export class TransitionTracker {
       }
 
       // Streak s: reset when the fast interval passes with no transition.
-      if (streak[i] > 0 && t - lastT[i] > FAST_TRANSITION_INTERVAL_MS) streak[i] = 0
+      if (streak[i] > 0 && t - lastT[i] > fastMs) streak[i] = 0
     }
 
     this.transitionsThisFrame = transitions
@@ -268,7 +276,7 @@ export class TransitionTracker {
    * below 0.80, instead of being spent at the first frame below 0.88.
    */
   private qualifies(a: number, aRatio: number, b: number, bRatio: number): boolean {
-    if (this.isRed) return aRatio >= RED_RATIO || bRatio >= RED_RATIO
-    return Math.min(a, b) < DARK_LIMIT
+    if (this.isRed) return aRatio >= this.redRatioLimit || bRatio >= this.redRatioLimit
+    return Math.min(a, b) < this.darkLimit
   }
 }
