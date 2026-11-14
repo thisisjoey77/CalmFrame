@@ -382,3 +382,20 @@ export const SELF_CHECK_CLEAN_DELTA = 0.01
 export const SELF_CHECK_BLACK_LEVEL = 3
 /** The capture counts as a black rectangle when this share of pixels is near black. */
 export const SELF_CHECK_BLACK_FRACTION = 0.95
+
+// ---------------------------------------------------------------------------
+// Phase 6: validator (tools/validate)
+// ---------------------------------------------------------------------------
+
+/** The synthetic test clips ("Test clips"): 10-second 1080p60 files with a 3-second steady
+ *  lead-in, so the ground truth is known by construction. */
+export const VALIDATE_CLIP_MS = 10000
+export const VALIDATE_CLIP_LEAD_IN_MS = 3000
+export const VALIDATE_CLIP_FPS = 60
+export const VALIDATE_CLIP_WIDTH = 1920
+export const VALIDATE_CLIP_HEIGHT = 1080
+/** x264 quality for the clips: near lossless, so the greys keep their levels within a code
+ *  or two, while staying in the High profile every decoder reads. */
+export const VALIDATE_CLIP_CRF = 4
+/** Verdicts are compared one second at a time ("Comparison with IRIS", step 4). */
+export const VALIDATE_SECOND_MS = 1000

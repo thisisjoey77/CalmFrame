@@ -1,0 +1,17 @@
+{
+  // Builds the validator CLIs (and the src/core they import) to CommonJS in tools/validate/dist,
+  // so plain Node runs them with no extra dependency: `npm run validate:build`.
+  // Typechecking is also covered by tsconfig.node.json, which includes tools/**.
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": ["./*.ts"],
+  "exclude": ["./*.test.ts"],
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "rootDir": "../..",
+    "outDir": "./dist",
+    "noEmit": false,
+    "composite": false,
+    "sourceMap": false
+  }
+}
