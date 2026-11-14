@@ -22,7 +22,8 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  */
 export async function runSelfCheck(
   video: HTMLVideoElement,
-  setTint: (on: boolean) => void
+  setTint: (on: boolean) => void,
+  tintAfter: boolean
 ): Promise<SelfCheckResult> {
   const canvas = document.createElement('canvas')
   canvas.width = SELF_CHECK_CANVAS_WIDTH
@@ -89,7 +90,7 @@ export async function runSelfCheck(
       cycles.push({ hidden, shown })
     }
   } finally {
-    setTint(true)
+    setTint(tintAfter)
   }
   return judge(cycles)
 }

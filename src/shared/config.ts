@@ -157,8 +157,48 @@ export const OVERLAY_BOTTOM_INSET = 1
 export const KILL_SWITCH_ACCELERATOR = 'Control+Alt+Shift+C'
 
 // ---------------------------------------------------------------------------
+// Phase 3: live detection
+// ---------------------------------------------------------------------------
+
+/** Step 2 acceptance: a 1-pixel black and white checkerboard averages to this Y in linear
+ *  light (point-sampling the gamma-encoded values would give 0.21). */
+export const CHECKERBOARD_Y = 0.5
+/** Pass A startup self-test sizes: whole pixels per cell (960x540, 1920x1080) and a
+ *  fractional number (1366x768 is 14.23 x 14.22 pixels per cell). */
+export const GRID_SELF_TEST_SIZES: readonly { width: number; height: number }[] = [
+  { width: 960, height: 540 },
+  { width: 1366, height: 768 },
+  { width: 1920, height: 1080 }
+]
+/** Largest allowed |Y - CHECKERBOARD_Y| in any cell. Whole-pixel cells read exactly 0.5.
+ *  Fractional cells can be off by half a pixel's share of the cell: 0.0025 at 1366x768. */
+export const GRID_SELF_TEST_CHECKER_TOLERANCE = 0.005
+/** Noise image for the GPU-versus-CPU check, fractional cells in both directions. */
+export const GRID_SELF_TEST_NOISE_SIZE = { width: 1366, height: 771 }
+/** Largest allowed difference, per cell and channel, between the GPU and CPU grids. */
+export const GRID_SELF_TEST_MAX_DIFF = 1e-3
+
+/** Grid read-backs that may be in flight at once. Read-back is asynchronous (a pixel buffer
+ *  and a fence) because a synchronous readPixels waited a whole vsync, about 17 ms,
+ *  whenever another window of the app was animating (Phase 3). The GPU normally finishes
+ *  within a frame, so 3 is headroom; when all are busy the oldest is read with a wait. */
+export const GRID_READBACK_SLOTS = 3
+
+/** Phase 3 budget for analysis per frame: upload, Pass A, read-back, detector, state. */
+export const ANALYSIS_BUDGET_MS = 4
+/** Analysis-time median and 95th percentile are taken over this many recent frames. */
+export const ANALYSIS_STATS_WINDOW = 120
+
+// ---------------------------------------------------------------------------
 // Phase 0 spike and debug tooling (not product behaviour)
 // ---------------------------------------------------------------------------
+
+/** Debug window graph: time span shown, and the smallest top of its y axis, in flashes
+ *  per second (a 10 Hz strobe reads about 10). */
+export const DEBUG_GRAPH_WINDOW_MS = 20000
+export const DEBUG_GRAPH_MIN_Y_MAX = 12
+/** Hazard start and end lines kept in the debug window. */
+export const DEBUG_HAZARD_LOG_MAX = 100
 
 /** Opacity of the red tint the overlay shows during the Phase 0 spike. */
 export const DEBUG_TINT_OPACITY = 0.3

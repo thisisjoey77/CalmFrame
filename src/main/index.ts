@@ -25,6 +25,9 @@ import {
   IPC,
   type CaptureSize,
   type CaptureStats,
+  type DetectionStats,
+  type GridSelfTestResult,
+  type HazardEvent,
   type OverlayState,
   type SelfCheckResult
 } from '../shared/messages'
@@ -36,6 +39,12 @@ let debugWin: BrowserWindow | null = null
 
 /** Debug-only: cycle through DEBUG_CAPTURE_SIZES and log the frame rate of each. */
 const fpsSweep = process.env['CALMFRAME_FPS_SWEEP'] === '1'
+/** Debug-only: show the Phase 0 red tint on the overlay, and run the capture-leak check. */
+const debugTint = process.env['CALMFRAME_DEBUG_TINT'] === '1'
+
+/** The overlay sends its Pass A self-test once at startup, possibly before the debug
+ *  window has loaded, so main keeps it and replays it. */
+let gridSelfTest: GridSelfTestResult | null = null
 
 /** Load one of the renderer pages: the Vite dev server in dev, the built file otherwise. */
 function loadPage(win: BrowserWindow, page: Page, hash = ''): void {
@@ -48,6 +57,24 @@ function loadPage(win: BrowserWindow, page: Page, hash = ''): void {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Log a line built from a renderer message without ever throwing. An exception in an IPC
+ * handler shows a modal error dialog in the main process, and a renderer that is reloaded
+ * with newer code can send fields this build doesn't know. A log line is not worth that.
+ */
+function logSafely(tag: string, build: () => string): void {
+  try {
+    console.log(build())
+  } catch (error) {
+    console.warn(`[${tag}] could not format a message: ${String(error)}`)
+  }
+}
+
+/** A number for a log line; '?' when it is missing. */
+function fmt(v: number | null | undefined, digits: number): string {
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '?'
+}
 let sweepSamples: number[] | null = null
 
 async function runFpsSweep(): Promise<void> {
@@ -134,15 +161,15 @@ function createOverlayWindow(): BrowserWindow {
     hideOverlay(`overlay renderer gone (${details.reason})`)
   })
 
-  loadPage(win, 'overlay')
+  loadPage(win, 'overlay', debugTint ? 'tint' : '')
   return win
 }
 
 /** Ordinary debug window (becomes the dashboard in Phase 5). */
 function createDebugWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 560,
-    height: 760,
+    width: 600,
+    height: 980,
     show: false,
     title: 'CalmFrame debug',
     autoHideMenuBar: true,
@@ -153,6 +180,9 @@ function createDebugWindow(): BrowserWindow {
   })
 
   win.on('ready-to-show', () => win.show())
+  win.webContents.on('did-finish-load', () => {
+    if (gridSelfTest) win.webContents.send(IPC.gridSelfTest, gridSelfTest)
+  })
   win.on('closed', () => {
     debugWin = null
     app.quit()
@@ -221,19 +251,61 @@ function installIpc(): void {
     const now = Date.now()
     if (now - lastLog >= DEBUG_LOG_INTERVAL_MS) {
       lastLog = now
-      const delay =
-        stats.delayMedianMs === null
-          ? 'delay n/a (no captureTime)'
-          : `delay median ${stats.delayMedianMs.toFixed(1)} ms, p95 ${stats.delayP95Ms?.toFixed(1)} ms`
-      console.log(
-        `[capture] ${stats.fps} fps | ${delay} | ${stats.width}x${stats.height} | skipped ${stats.skippedFrames}/${stats.framesTotal}`
-      )
+      logSafely('capture', () => {
+        const delay =
+          stats.delayMedianMs === null
+            ? 'delay n/a (no captureTime)'
+            : `delay median ${fmt(stats.delayMedianMs, 1)} ms, p95 ${fmt(stats.delayP95Ms, 1)} ms`
+        return `[capture] ${stats.fps} fps | ${delay} | ${stats.width}x${stats.height} | skipped ${stats.skippedFrames}/${stats.framesTotal}`
+      })
     }
   })
 
   ipcMain.on(IPC.captureError, (_event, message: string) => {
     console.error(`[capture] error: ${message}`)
     hideOverlay(`capture error: ${message}`)
+  })
+
+  ipcMain.on(IPC.pipelineError, (_event, message: string) => {
+    console.error(`[pipeline] error: ${message}`)
+    hideOverlay(`detection off: ${message}`)
+  })
+
+  ipcMain.on(IPC.gridSelfTest, (_event, result: GridSelfTestResult) => {
+    gridSelfTest = result
+    debugWin?.webContents.send(IPC.gridSelfTest, result)
+    logSafely(
+      'grid self-test',
+      () => `[grid self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
+    )
+  })
+
+  let lastDetectLog = 0
+  ipcMain.on(IPC.detectionStats, (_event, stats: DetectionStats) => {
+    debugWin?.webContents.send(IPC.detectionStats, stats)
+    const now = Date.now()
+    if (now - lastDetectLog < DEBUG_LOG_INTERVAL_MS) return
+    lastDetectLog = now
+    logSafely(
+      'detect',
+      () =>
+        `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
+        `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
+        `hot ${stats.hotCells} | state ${stats.state} | analysis median ${fmt(stats.analysisMedianMs, 2)} ms, ` +
+        `p95 ${fmt(stats.analysisP95Ms, 2)} ms (issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}) | ` +
+        `read-back wait median ${fmt(stats.readbackWaitMedianMs, 1)} ms, p95 ${fmt(stats.readbackWaitP95Ms, 1)} ms, forced ${stats.forcedReadbacks}`
+    )
+  })
+
+  ipcMain.on(IPC.hazardEvent, (_event, event: HazardEvent) => {
+    debugWin?.webContents.send(IPC.hazardEvent, event)
+    logSafely('hazard', () => {
+      const when = new Date(event.wallMs).toISOString().slice(11, 23)
+      const values = `${event.type}, ${fmt(event.frequencyHz, 1)} Hz, dL ${fmt(event.flashSize, 2)}, area ${fmt(event.areaFraction, 2)}, graph ${fmt(event.graphValue, 1)}`
+      return event.kind === 'start'
+        ? `[hazard] START ${when} UTC (capture t ${fmt(event.tMs, 1)} ms): ${values}`
+        : `[hazard] END   ${when} UTC (capture t ${fmt(event.tMs, 1)} ms) after ${fmt((event.durationMs ?? 0) / 1000, 2)} s, peaks: ${values}`
+    })
   })
 
   ipcMain.on(IPC.selfCheckRun, () => {
@@ -247,10 +319,12 @@ function installIpc(): void {
 
   ipcMain.on(IPC.selfCheckResult, (_event, result: SelfCheckResult) => {
     debugWin?.webContents.send(IPC.selfCheckResult, result)
-    console.log(`[self-check] ${result.verdict.toUpperCase()}: ${result.detail}`)
+    logSafely('self-check', () => `[self-check] ${result.verdict.toUpperCase()}: ${result.detail}`)
     result.cycles.forEach((c, i) => {
-      console.log(
-        `[self-check]   cycle ${i + 1}: red ratio off ${c.hidden.redRatio.toFixed(3)} -> on ${c.shown.redRatio.toFixed(3)}, black share on ${c.shown.blackFraction.toFixed(2)}`
+      logSafely(
+        'self-check',
+        () =>
+          `[self-check]   cycle ${i + 1}: red ratio off ${fmt(c.hidden.redRatio, 3)} -> on ${fmt(c.shown.redRatio, 3)}, black share on ${fmt(c.shown.blackFraction, 2)}`
       )
     })
   })

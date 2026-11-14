@@ -12,6 +12,10 @@ const api: CalmFrameApi = {
   onCaptureRestart: (callback) => {
     ipcRenderer.on(IPC.captureRestart, (_event, size) => callback(size))
   },
+  sendDetectionStats: (stats) => ipcRenderer.send(IPC.detectionStats, stats),
+  sendHazardEvent: (event) => ipcRenderer.send(IPC.hazardEvent, event),
+  sendGridSelfTest: (result) => ipcRenderer.send(IPC.gridSelfTest, result),
+  sendPipelineError: (message) => ipcRenderer.send(IPC.pipelineError, message),
   runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
   restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
   setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),
@@ -23,6 +27,15 @@ const api: CalmFrameApi = {
   },
   onOverlayState: (callback) => {
     ipcRenderer.on(IPC.overlayState, (_event, state) => callback(state))
+  },
+  onDetectionStats: (callback) => {
+    ipcRenderer.on(IPC.detectionStats, (_event, stats) => callback(stats))
+  },
+  onHazardEvent: (callback) => {
+    ipcRenderer.on(IPC.hazardEvent, (_event, event) => callback(event))
+  },
+  onGridSelfTest: (callback) => {
+    ipcRenderer.on(IPC.gridSelfTest, (_event, result) => callback(result))
   }
 }
 

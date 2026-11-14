@@ -3,6 +3,9 @@
  * Only small stats objects cross IPC. Frames never do (CLAUDE.md working rules).
  */
 
+import type { HazardType } from '../core/detector'
+import type { OverlayStateName } from '../core/stateMachine'
+
 export const IPC = {
   /** overlay -> main -> debug: capture stats, every STATS_EVERY_N_FRAMES frames. */
   captureStats: 'capture-stats',
@@ -17,7 +20,15 @@ export const IPC = {
   /** debug -> main: put the debug window above the overlay and hide it from capture. */
   debugSetOnTop: 'debug-set-on-top',
   /** debug -> main -> overlay: reopen the capture with a different size cap (Phase 0 tuning). */
-  captureRestart: 'capture-restart'
+  captureRestart: 'capture-restart',
+  /** overlay -> main -> debug: detector stats, every STATS_EVERY_N_FRAMES frames. */
+  detectionStats: 'detection-stats',
+  /** overlay -> main -> debug: a hazard started or ended. */
+  hazardEvent: 'hazard-event',
+  /** overlay -> main -> debug: the Pass A startup self-test result. */
+  gridSelfTest: 'grid-self-test',
+  /** overlay -> main: the GPU pipeline or detector failed. Main fails open. */
+  pipelineError: 'pipeline-error'
 } as const
 
 export interface CaptureSize {
@@ -68,6 +79,68 @@ export interface OverlayState {
   reason: string
 }
 
+/** Pass A startup self-test: the Step 2 checkerboard, and GPU against CPU on noise. */
+export interface GridSelfTestResult {
+  pass: boolean
+  /** Y over all cells of a 1-pixel checkerboard; each should be 0.5. */
+  checkerboards: { width: number; height: number; minY: number; maxY: number; meanY: number }[]
+  /** Largest per-channel difference between the GPU grid and the CPU twin. */
+  noiseMaxDiff: number
+  detail: string
+}
+
+/** Detector output for the debug window, sent every STATS_EVERY_N_FRAMES frames. */
+export interface DetectionStats {
+  /** Capture timestamp of the latest frame, in ms on the overlay's performance clock. */
+  tMs: number
+  /** Largest graph value (Step 8) over the frames since the last message, in flashes per
+   *  second over a hazardous area, so a peak between messages is not lost. */
+  graphValue: number
+  /** Whether any frame since the last message had a hazard. */
+  hazard: boolean
+  /** The latest frame's detector outputs (Step 8). */
+  type: HazardType
+  frequencyHz: number
+  flashSize: number
+  areaFraction: number
+  hotCells: number
+  /** Overlay state machine. Phase 3 only reports it; Phase 4 acts on it. */
+  state: OverlayStateName
+  /** Main-thread analysis time per frame over recent frames, and its parts: issue
+   *  (upload, Pass A, start the read-back), copy (the finished grid out of its buffer)
+   *  and detector (with the state machine). Null before the first frame. */
+  analysisMedianMs: number | null
+  analysisP95Ms: number | null
+  issueMedianMs: number | null
+  copyMedianMs: number | null
+  detectorMedianMs: number | null
+  /** From starting a read-back to collecting it: GPU latency added to detection, not
+   *  main-thread time. */
+  readbackWaitMedianMs: number | null
+  readbackWaitP95Ms: number | null
+  /** Read-backs collected before the GPU signalled, because every slot was busy. */
+  forcedReadbacks: number
+  framesAnalysed: number
+}
+
+/** A hazard started or ended, from the detector's per-frame hazard flag. */
+export interface HazardEvent {
+  kind: 'start' | 'end'
+  /** Capture timestamp of the frame where it changed, in ms on the overlay's clock. */
+  tMs: number
+  /** The same moment as wall-clock ms since the epoch. */
+  wallMs: number
+  /** At start, this frame's values. At end, the peaks over the whole hazard (type is
+   *  'red' if it was red at any point). */
+  type: HazardType
+  frequencyHz: number
+  flashSize: number
+  areaFraction: number
+  graphValue: number
+  /** How long the hazard lasted. Null at start. */
+  durationMs: number | null
+}
+
 /** The API the preload script exposes to the renderers as window.api. */
 export interface CalmFrameApi {
   // overlay renderer
@@ -76,6 +149,10 @@ export interface CalmFrameApi {
   sendSelfCheckResult(result: SelfCheckResult): void
   onSelfCheckRun(callback: () => void): void
   onCaptureRestart(callback: (size: CaptureSize) => void): void
+  sendDetectionStats(stats: DetectionStats): void
+  sendHazardEvent(event: HazardEvent): void
+  sendGridSelfTest(result: GridSelfTestResult): void
+  sendPipelineError(message: string): void
   // debug window
   runSelfCheck(): void
   restartCapture(size: CaptureSize): void
@@ -83,4 +160,7 @@ export interface CalmFrameApi {
   onCaptureStats(callback: (stats: CaptureStats) => void): void
   onSelfCheckResult(callback: (result: SelfCheckResult) => void): void
   onOverlayState(callback: (state: OverlayState) => void): void
+  onDetectionStats(callback: (stats: DetectionStats) => void): void
+  onHazardEvent(callback: (event: HazardEvent) => void): void
+  onGridSelfTest(callback: (result: GridSelfTestResult) => void): void
 }
