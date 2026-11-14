@@ -286,14 +286,18 @@ function installIpc(): void {
     const now = Date.now()
     if (now - lastDetectLog < DEBUG_LOG_INTERVAL_MS) return
     lastDetectLog = now
+    const l = stats.latency
     logSafely(
       'detect',
       () =>
         `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
         `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
-        `hot ${stats.hotCells} | state ${stats.state} | analysis median ${fmt(stats.analysisMedianMs, 2)} ms, ` +
-        `p95 ${fmt(stats.analysisP95Ms, 2)} ms (issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}) | ` +
-        `read-back wait median ${fmt(stats.readbackWaitMedianMs, 1)} ms, p95 ${fmt(stats.readbackWaitP95Ms, 1)} ms, forced ${stats.forcedReadbacks}`
+        `hot ${stats.hotCells} | state ${stats.state} | cost median ${fmt(stats.cost.median, 2)} ms, ` +
+        `p95 ${fmt(stats.cost.p95, 2)} ms (issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}) | ` +
+        `latency median/p95 ms: capture>callback ${fmt(l.captureToCallback.median, 1)}/${fmt(l.captureToCallback.p95, 1)}, ` +
+        `callback>grid ${fmt(l.callbackToGrid.median, 1)}/${fmt(l.callbackToGrid.p95, 1)}, ` +
+        `grid>decision ${fmt(l.gridToDecision.median, 1)}/${fmt(l.gridToDecision.p95, 1)}, ` +
+        `total ${fmt(l.captureToDecision.median, 1)}/${fmt(l.captureToDecision.p95, 1)} | busy skips ${stats.busySkips}`
     )
   })
 

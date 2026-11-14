@@ -181,7 +181,8 @@ export const GRID_SELF_TEST_MAX_DIFF = 1e-3
 /** Grid read-backs that may be in flight at once. Read-back is asynchronous (a pixel buffer
  *  and a fence) because a synchronous readPixels waited a whole vsync, about 17 ms,
  *  whenever another window of the app was animating (Phase 3). The GPU normally finishes
- *  within a frame, so 3 is headroom; when all are busy the oldest is read with a wait. */
+ *  within a frame, so 3 is headroom. When all are busy the new frame is skipped, so the
+ *  main thread never waits for the GPU. */
 export const GRID_READBACK_SLOTS = 3
 
 /** Phase 3 budget for analysis per frame: upload, Pass A, read-back, detector, state. */

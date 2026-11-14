@@ -75,10 +75,109 @@
         font-size: 12px;
         opacity: 0.7;
       }
+      #graph {
+        width: 100%;
+        max-width: 560px;
+        height: 150px;
+        display: block;
+      }
+      #hazard-log {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font-family: Consolas, 'Cascadia Mono', monospace;
+        font-size: 12px;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      #hazard-log li {
+        padding: 1px 0;
+        white-space: pre;
+      }
+      .numbers td:nth-child(2) {
+        font-variant-numeric: tabular-nums;
+      }
     </style>
   </head>
   <body>
-    <h1>CalmFrame debug: Phase 0 overlay spike</h1>
+    <h1>CalmFrame debug: Phase 3 live detection</h1>
+
+    <h2>Flashes per second over a hazardous area</h2>
+    <canvas id="graph"></canvas>
+    <p class="hint">
+      Step 8 graph value, the largest over each stats message. Red while the detector reports a
+      hazard. The dashed line is the limit: more than 3 flashes in a second.
+    </p>
+
+    <h2>Detector</h2>
+    <table class="numbers">
+      <tr>
+        <td>Hazard</td>
+        <td id="d-hazard">waiting</td>
+      </tr>
+      <tr>
+        <td>State</td>
+        <td id="d-state">waiting</td>
+      </tr>
+      <tr>
+        <td>Estimated frequency</td>
+        <td id="d-freq">waiting</td>
+      </tr>
+      <tr>
+        <td>Flash size</td>
+        <td id="d-size">waiting</td>
+      </tr>
+      <tr>
+        <td>Largest area fraction</td>
+        <td id="d-area">waiting</td>
+      </tr>
+      <tr>
+        <td>Grid self-test</td>
+        <td id="d-selftest">waiting</td>
+      </tr>
+    </table>
+    <div class="hint" id="d-selftest-detail"></div>
+
+    <h2>Timing</h2>
+    <table class="numbers">
+      <tr>
+        <td>Analysis cost per frame</td>
+        <td id="t-cost">waiting</td>
+      </tr>
+      <tr>
+        <td>Captured → frame callback</td>
+        <td id="t-callback">waiting</td>
+      </tr>
+      <tr>
+        <td>Callback → grid ready</td>
+        <td id="t-grid">waiting</td>
+      </tr>
+      <tr>
+        <td>Grid → decision</td>
+        <td id="t-decision">waiting</td>
+      </tr>
+      <tr>
+        <td>Captured → decision</td>
+        <td id="t-total">waiting</td>
+      </tr>
+      <tr>
+        <td>Decision → overlay drawn</td>
+        <td>Phase 4</td>
+      </tr>
+      <tr>
+        <td>Frames skipped, GPU busy</td>
+        <td id="t-skips">waiting</td>
+      </tr>
+    </table>
+    <p class="hint">
+      Latency is from each frame's capture timestamp. Chromium stamps it late, so these understate
+      the real delay; the slow-motion footage is the end-to-end number.
+    </p>
+
+    <h2>Hazard log</h2>
+    <ul id="hazard-log">
+      <li>no hazards yet</li>
+    </ul>
 
     <h2>Live capture (what the overlay sees)</h2>
     <video id="preview" muted playsinline></video>

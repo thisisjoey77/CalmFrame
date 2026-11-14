@@ -89,6 +89,12 @@ export interface GridSelfTestResult {
   detail: string
 }
 
+/** Median and 95th percentile of a duration over recent frames, in ms. Null when empty. */
+export interface Timing {
+  median: number | null
+  p95: number | null
+}
+
 /** Detector output for the debug window, sent every STATS_EVERY_N_FRAMES frames. */
 export interface DetectionStats {
   /** Capture timestamp of the latest frame, in ms on the overlay's performance clock. */
@@ -106,20 +112,27 @@ export interface DetectionStats {
   hotCells: number
   /** Overlay state machine. Phase 3 only reports it; Phase 4 acts on it. */
   state: OverlayStateName
-  /** Main-thread analysis time per frame over recent frames, and its parts: issue
-   *  (upload, Pass A, start the read-back), copy (the finished grid out of its buffer)
-   *  and detector (with the state machine). Null before the first frame. */
-  analysisMedianMs: number | null
-  analysisP95Ms: number | null
+  /** Main-thread analysis cost per frame (the Phase 3 budget), and the medians of its
+   *  parts: issue (upload, Pass A, start the read-back), copy (the finished grid out of
+   *  its buffer) and detector (with the state machine). */
+  cost: Timing
   issueMedianMs: number | null
   copyMedianMs: number | null
   detectorMedianMs: number | null
-  /** From starting a read-back to collecting it: GPU latency added to detection, not
-   *  main-thread time. */
-  readbackWaitMedianMs: number | null
-  readbackWaitP95Ms: number | null
-  /** Read-backs collected before the GPU signalled, because every slot was busy. */
-  forcedReadbacks: number
+  /** Latency per stage, from each frame's capture timestamp. Chromium stamps captureTime
+   *  late (Phase 0), so the first stage and the total are understated, and nothing here
+   *  sees the compositor or the display: the slow-motion footage is the end-to-end truth.
+   *  Phase 4 adds decision -> overlay drawn. */
+  latency: {
+    captureToCallback: Timing
+    /** Upload, Pass A, the GPU queue and the read-back. */
+    callbackToGrid: Timing
+    /** Detector and state machine. */
+    gridToDecision: Timing
+    captureToDecision: Timing
+  }
+  /** Frames skipped because every read-back slot was still busy (the GPU was behind). */
+  busySkips: number
   framesAnalysed: number
 }
 

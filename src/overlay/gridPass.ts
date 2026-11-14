@@ -3,9 +3,11 @@
  * then read the grid back. docs/SPEC.md, "The per-frame loop", steps 2 and 3.
  *
  * Live frames are read back asynchronously: readPixels into a pixel buffer, a fence, and a
- * copy once the GPU has signalled it. A synchronous readPixels waited a whole vsync (about
- * 17 ms) whenever another window of the app animated, which blocked the overlay's main
- * thread and cost captured frames. The startup self-test still reads synchronously.
+ * copy once the GPU has signalled it. The main thread never waits for the GPU: if every
+ * read-back slot is still busy, the new frame is skipped. A synchronous readPixels waited
+ * a whole vsync (about 17 ms) whenever another window of the app animated, which blocked
+ * the overlay's main thread and cost captured frames. The startup self-test still reads
+ * synchronously.
  *
  * Phase 4 adds Passes B and C on the same context, reading the uploaded frame from
  * `source`.
@@ -14,18 +16,19 @@
 import { GRID_CELLS, GRID_COLS, GRID_READBACK_SLOTS, GRID_ROWS } from '../shared/config'
 import { FULLSCREEN_VS, GRID_FS } from './shaders'
 
-/** Timing of one finished read-back, handed over with its grid. Reused between calls. */
+/** Timing of one finished read-back, handed over with its grid. Reused between calls.
+ *  Times are on the performance clock, the same clock as capture timestamps. */
 export interface GridReadback {
   /** Capture timestamp of the frame the grid came from. */
   tMs: number
+  /** When work on the frame began (in its frame callback). */
+  startedAt: number
   /** Main-thread time to upload the frame, draw Pass A and start the read-back. */
   issueMs: number
-  /** From starting the read-back to collecting it: GPU latency, not main-thread time. */
-  waitMs: number
+  /** When the grid was in hand, copied out of its buffer. */
+  readyAt: number
   /** Main-thread time to copy the finished grid out of its buffer. */
   copyMs: number
-  /** All slots were busy, so this copy waited for the GPU. */
-  forced: boolean
 }
 
 export type GridConsumer = (grid: Float32Array, info: GridReadback) => void
@@ -34,8 +37,8 @@ interface Slot {
   buffer: WebGLBuffer
   sync: WebGLSync | null
   tMs: number
+  startedAt: number
   issueMs: number
-  issuedAt: number
 }
 
 export class GridPass {
@@ -57,10 +60,10 @@ export class GridPass {
   private readonly free: Slot[] = []
   private readonly info: GridReadback = {
     tMs: 0,
+    startedAt: 0,
     issueMs: 0,
-    waitMs: 0,
-    copyMs: 0,
-    forced: false
+    readyAt: 0,
+    copyMs: 0
   }
 
   constructor(private readonly gl: WebGL2RenderingContext) {
@@ -104,7 +107,7 @@ export class GridPass {
       const buffer = gl.createBuffer()
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
       gl.bufferData(gl.PIXEL_PACK_BUFFER, this.grid.byteLength, gl.STREAM_READ)
-      this.free.push({ buffer, sync: null, tMs: 0, issueMs: 0, issuedAt: 0 })
+      this.free.push({ buffer, sync: null, tMs: 0, startedAt: 0, issueMs: 0 })
     }
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
 
@@ -142,12 +145,13 @@ export class GridPass {
 
   /**
    * Live frame: upload it, draw Pass A and start reading the grid back, without waiting.
-   * The grid arrives later through collect(). If every slot is busy, the oldest is
-   * collected first, waiting for the GPU if it must.
+   * The grid arrives later through collect().
    * @param tMs the frame's capture timestamp, handed back with its grid
+   * @returns false if every read-back slot is still busy, so the frame was skipped
+   *          rather than waiting for the GPU
    */
-  analyse(video: HTMLVideoElement, tMs: number, onGrid: GridConsumer): void {
-    if (this.free.length === 0) this.collect(onGrid, true)
+  analyse(video: HTMLVideoElement, tMs: number): boolean {
+    if (this.free.length === 0) return false
     const gl = this.gl
     const t0 = performance.now()
     this.uploadVideo(video)
@@ -160,28 +164,29 @@ export class GridPass {
     slot.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
     // Submit now, so the fence can signal while this thread does other work.
     gl.flush()
-    const t1 = performance.now()
     slot.tMs = tMs
-    slot.issueMs = t1 - t0
-    slot.issuedAt = t1
+    slot.startedAt = t0
+    slot.issueMs = performance.now() - t0
     this.inFlight.push(slot)
+    return true
   }
 
   /**
    * Hand every finished read-back to onGrid, oldest first, so grids arrive in capture
-   * order. A fence's status only updates between tasks, so call this from a later task
-   * than analyse(). With force, the oldest is collected even if unfinished (a stall).
+   * order. The GPU finishes them in order, so once the newest is ready the older ones are
+   * too, and handing them all over costs no latency while giving the detector every
+   * sample. A fence's status only updates between tasks, so call this from a later task
+   * than analyse().
    * @returns how many grids were handed over
    */
-  collect(onGrid: GridConsumer, force = false): number {
+  collect(onGrid: GridConsumer): number {
     const gl = this.gl
     let n = 0
     while (this.inFlight.length > 0) {
       const slot = this.inFlight[0]
-      const ready =
-        slot.sync !== null && gl.getSyncParameter(slot.sync, gl.SYNC_STATUS) === gl.SIGNALED
-      const forced = !ready && force && n === 0
-      if (!ready && !forced) break
+      if (slot.sync === null || gl.getSyncParameter(slot.sync, gl.SYNC_STATUS) !== gl.SIGNALED) {
+        break
+      }
       const c0 = performance.now()
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.buffer)
       gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, this.grid)
@@ -191,10 +196,10 @@ export class GridPass {
       this.release(slot)
       const info = this.info
       info.tMs = slot.tMs
+      info.startedAt = slot.startedAt
       info.issueMs = slot.issueMs
-      info.waitMs = c0 - slot.issuedAt
+      info.readyAt = c1
       info.copyMs = c1 - c0
-      info.forced = forced
       n++
       onGrid(this.grid, info)
     }

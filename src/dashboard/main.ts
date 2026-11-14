@@ -1,13 +1,23 @@
-// Debug window for the Phase 0 spike. Phase 5 replaces it with the real dashboard.
+// Debug window: Phase 0 capture tools plus Phase 3 live detection. Phase 5 replaces it
+// with the real dashboard.
 import {
+  ANALYSIS_BUDGET_MS,
   CAPTURE_FPS,
   CAPTURE_MAX_WIDTH,
   CAPTURE_MAX_HEIGHT,
   DEBUG_CAPTURE_SIZES,
+  DEBUG_HAZARD_LOG_MAX,
   PHASE0_MIN_FPS
 } from '../shared/config'
-import type { CaptureStats, SelfCheckResult } from '../shared/messages'
+import type {
+  CaptureStats,
+  DetectionStats,
+  HazardEvent,
+  SelfCheckResult,
+  Timing
+} from '../shared/messages'
 import { openScreenStream } from '../overlay/capture'
+import { ScrollingGraph } from './graph'
 
 const api = window.api
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
@@ -144,3 +154,87 @@ $<HTMLInputElement>('motion-on').addEventListener('change', (e) => {
 // The FPS sweep loads this page with #sweep: motion test on so the screen changes every
 // frame. The preview stays off unless the user turns it on.
 if (location.hash === '#sweep') setMotion(true)
+
+// ---------------------------------------------------------------------------
+// Phase 3: live detection
+// ---------------------------------------------------------------------------
+
+const graph = new ScrollingGraph($<HTMLCanvasElement>('graph'))
+graph.draw()
+
+const stateText: Record<DetectionStats['state'], string> = {
+  safe: 'Safe',
+  active: 'Active (Phase 4 will smooth here)',
+  release: 'Release (fading out)',
+  disabled: 'Disabled'
+}
+
+function ms(v: number | null, digits = 1): string {
+  return v === null ? '?' : `${v.toFixed(digits)} ms`
+}
+
+function timingText(t: Timing): string {
+  return `${ms(t.median)} median, ${ms(t.p95)} p95`
+}
+
+api.onDetectionStats((s: DetectionStats) => {
+  graph.push(s.tMs, s.graphValue, s.hazard)
+  graph.draw()
+  setCell(
+    'd-hazard',
+    s.hazard ? `HAZARD (${s.type}), ${s.hotCells} hot cells` : `none, ${s.hotCells} hot cells`,
+    s.hazard ? 'bad' : 'ok'
+  )
+  setCell('d-state', stateText[s.state])
+  setCell('d-freq', s.frequencyHz > 0 ? `${s.frequencyHz.toFixed(1)} Hz` : '-')
+  setCell('d-size', s.flashSize > 0 ? `ΔL ${s.flashSize.toFixed(2)}` : '-')
+  setCell('d-area', s.areaFraction.toFixed(2))
+
+  const overBudget = s.cost.p95 !== null && s.cost.p95 >= ANALYSIS_BUDGET_MS
+  setCell(
+    't-cost',
+    `${timingText(s.cost)} (budget ${ANALYSIS_BUDGET_MS} ms; issue ${ms(s.issueMedianMs, 2)}, copy ${ms(s.copyMedianMs, 2)}, detector ${ms(s.detectorMedianMs, 2)})`,
+    overBudget ? 'warn' : 'ok'
+  )
+  setCell('t-callback', timingText(s.latency.captureToCallback))
+  setCell('t-grid', timingText(s.latency.callbackToGrid))
+  setCell('t-decision', timingText(s.latency.gridToDecision))
+  setCell('t-total', timingText(s.latency.captureToDecision))
+  setCell('t-skips', `${s.busySkips} of ${s.framesAnalysed + s.busySkips}`)
+})
+
+api.onGridSelfTest((r) => {
+  setCell(
+    'd-selftest',
+    r.pass ? 'PASS: true area average in linear light' : 'FAIL: detection is off',
+    r.pass ? 'ok' : 'bad'
+  )
+  $('d-selftest-detail').textContent = r.detail
+})
+
+/** Local wall-clock time with milliseconds, e.g. 22:41:07.123. */
+function clock(wallMs: number): string {
+  const d = new Date(wallMs)
+  const hms = d.toLocaleTimeString('en-GB', { hour12: false })
+  return `${hms}.${String(d.getMilliseconds()).padStart(3, '0')}`
+}
+
+const hazardLog = $('hazard-log')
+let hazardLogEmpty = true
+
+api.onHazardEvent((e: HazardEvent) => {
+  if (hazardLogEmpty) {
+    hazardLog.textContent = ''
+    hazardLogEmpty = false
+  }
+  const values = `${e.type}, ${e.frequencyHz.toFixed(1)} Hz, ΔL ${e.flashSize.toFixed(2)}, area ${e.areaFraction.toFixed(2)}`
+  const line =
+    e.kind === 'start'
+      ? `START ${clock(e.wallMs)}  ${values}`
+      : `END   ${clock(e.wallMs)}  after ${((e.durationMs ?? 0) / 1000).toFixed(2)} s, peaks ${values}, ${e.graphValue.toFixed(1)}/s`
+  const li = document.createElement('li')
+  li.textContent = line
+  li.title = `capture timestamp ${e.tMs.toFixed(1)} ms`
+  hazardLog.prepend(li)
+  while (hazardLog.childElementCount > DEBUG_HAZARD_LOG_MAX) hazardLog.lastElementChild?.remove()
+})

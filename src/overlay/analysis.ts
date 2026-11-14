@@ -6,12 +6,15 @@
  * The grid is collected as soon as the GPU signals it (polled between tasks), and the
  * detector runs on it with that frame's own capture timestamp, in capture order.
  *
+ * Latency is measured per stage from the capture timestamp: captured -> frame callback ->
+ * grid ready -> decision. Phase 4 adds decision -> overlay drawn.
+ *
  * Runs in the overlay renderer. Only stats every few frames and hazard start/end events
  * leave this module. Frames never cross IPC.
  */
 
 import { ANALYSIS_STATS_WINDOW } from '../shared/config'
-import type { DetectionStats, HazardEvent } from '../shared/messages'
+import type { DetectionStats, HazardEvent, Timing } from '../shared/messages'
 import { Detector, type DetectorResult, type HazardType } from '../core/detector'
 import { OverlayStateMachine } from '../core/stateMachine'
 import type { GridPass, GridReadback } from './gridPass'
@@ -23,6 +26,10 @@ export interface AnalysisSink {
   failed(error: unknown): void
 }
 
+function timing(ring: SampleRing): Timing {
+  return { median: ring.percentile(0.5), p95: ring.percentile(0.95) }
+}
+
 export class LiveAnalysis {
   // The GPU reads back RGBA, so the detector takes four values per cell.
   private detector = new Detector({ inputChannels: 4 })
@@ -31,13 +38,27 @@ export class LiveAnalysis {
   private stopped = false
   private pollTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Timing over recent frames. Main-thread cost is issue + copy + detector.
-  private readonly totalMs = new SampleRing(ANALYSIS_STATS_WINDOW)
+  // Main-thread cost per frame: issue + copy + detector.
+  private readonly costMs = new SampleRing(ANALYSIS_STATS_WINDOW)
   private readonly issueMs = new SampleRing(ANALYSIS_STATS_WINDOW)
   private readonly copyMs = new SampleRing(ANALYSIS_STATS_WINDOW)
   private readonly detectorMs = new SampleRing(ANALYSIS_STATS_WINDOW)
-  private readonly waitMs = new SampleRing(ANALYSIS_STATS_WINDOW)
-  private forced = 0
+  // Latency per stage, from the capture timestamp.
+  private readonly toCallback = new SampleRing(ANALYSIS_STATS_WINDOW)
+  private readonly toGrid = new SampleRing(ANALYSIS_STATS_WINDOW)
+  private readonly toDecision = new SampleRing(ANALYSIS_STATS_WINDOW)
+  private readonly total = new SampleRing(ANALYSIS_STATS_WINDOW)
+  private readonly rings = [
+    this.costMs,
+    this.issueMs,
+    this.copyMs,
+    this.detectorMs,
+    this.toCallback,
+    this.toGrid,
+    this.toDecision,
+    this.total
+  ]
+  private busySkips = 0
 
   private last: DetectorResult | null = null
   private lastT = 0
@@ -62,7 +83,8 @@ export class LiveAnalysis {
   ) {}
 
   /**
-   * Start analysing one captured frame. Its result arrives once the GPU is done.
+   * Start analysing one captured frame. Its result arrives once the GPU is done. If the
+   * GPU is still busy with earlier frames, this one is skipped rather than waited for.
    * @param tMs the frame's capture timestamp (performance clock)
    * @param captureFps measured capture rate, for the filter's frames per half-cycle
    */
@@ -70,7 +92,7 @@ export class LiveAnalysis {
     if (this.stopped) return
     this.captureFps = captureFps
     this.pass.collect(this.onGrid)
-    this.pass.analyse(video, tMs, this.onGrid)
+    if (!this.pass.analyse(video, tMs)) this.busySkips++
     this.schedulePoll()
   }
 
@@ -95,14 +117,17 @@ export class LiveAnalysis {
       areaFraction: d?.areaFraction ?? 0,
       hotCells: d?.hotCells ?? 0,
       state: this.machine.state,
-      analysisMedianMs: this.totalMs.percentile(0.5),
-      analysisP95Ms: this.totalMs.percentile(0.95),
+      cost: timing(this.costMs),
       issueMedianMs: this.issueMs.percentile(0.5),
       copyMedianMs: this.copyMs.percentile(0.5),
       detectorMedianMs: this.detectorMs.percentile(0.5),
-      readbackWaitMedianMs: this.waitMs.percentile(0.5),
-      readbackWaitP95Ms: this.waitMs.percentile(0.95),
-      forcedReadbacks: this.forced,
+      latency: {
+        captureToCallback: timing(this.toCallback),
+        callbackToGrid: timing(this.toGrid),
+        gridToDecision: timing(this.toDecision),
+        captureToDecision: timing(this.total)
+      },
+      busySkips: this.busySkips,
       framesAnalysed: this.frames
     }
     this.periodGraphMax = 0
@@ -119,10 +144,8 @@ export class LiveAnalysis {
     if (this.hazardOn) this.endHazard(this.lastT)
     this.detector = new Detector({ inputChannels: 4 })
     this.machine = new OverlayStateMachine()
-    for (const ring of [this.totalMs, this.issueMs, this.copyMs, this.detectorMs, this.waitMs]) {
-      ring.clear()
-    }
-    this.forced = 0
+    for (const ring of this.rings) ring.clear()
+    this.busySkips = 0
     this.last = null
     this.frames = 0
     this.periodGraphMax = 0
@@ -134,14 +157,18 @@ export class LiveAnalysis {
     const t0 = performance.now()
     const d = this.detector.step(grid, info.tMs)
     this.machine.step(info.tMs, d, this.captureFps)
-    const detectorMs = performance.now() - t0
+    const decidedAt = performance.now()
+    const detectorMs = decidedAt - t0
 
-    this.totalMs.push(info.issueMs + info.copyMs + detectorMs)
+    this.costMs.push(info.issueMs + info.copyMs + detectorMs)
     this.issueMs.push(info.issueMs)
     this.copyMs.push(info.copyMs)
     this.detectorMs.push(detectorMs)
-    this.waitMs.push(info.waitMs)
-    if (info.forced) this.forced++
+    this.toCallback.push(info.startedAt - info.tMs)
+    this.toGrid.push(info.readyAt - info.startedAt)
+    this.toDecision.push(decidedAt - info.readyAt)
+    this.total.push(decidedAt - info.tMs)
+
     this.frames++
     this.last = d
     this.lastT = info.tMs
