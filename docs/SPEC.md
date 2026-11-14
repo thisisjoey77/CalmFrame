@@ -272,7 +272,7 @@ The 1.5 s hold is longer than the 1 s counting window, so the detector has fully
 ### What the viewer gives up
 
 - **Motion trails while active.** At α = 0.05 moving objects leave about a third of a second of ghosting. Static content stays sharp.
-- **A slightly late picture while active.** The copy lags the real screen by the pipeline latency. The cursor stays live because Windows draws it above the overlay; request capture without the cursor so no ghost cursor appears.
+- **A slightly late picture while active.** The copy lags the real screen by the pipeline latency. The cursor stays live because Windows draws it above the overlay. We request capture without the cursor, but Chromium ignores that, so a smeared ghost cursor can appear in the smoothed copy (Phase 0 results).
 - **Protected video shows black.** DRM streams capture as black, so they can neither be detected nor shown smoothed.
 
 ### Stretch: smooth only the flashing region
@@ -315,14 +315,14 @@ These are the settings the plan depends on. Each is a documented Electron window
 
 - Transparent, frameless, no shadow, hidden from the taskbar, not focusable.
 - Always on top at the highest level, and ignoring all mouse events so clicks reach the app underneath.
-- Sized to the primary display's bounds. Do not use the OS fullscreen mode.
+- Sized to the primary display's bounds, minus 1 DIP at the bottom so Windows doesn't hide the taskbar. Apply the bounds again after showing, because Windows clamps new windows to the work area. Do not use the OS fullscreen mode.
 - Content protection on. On Windows 10 version 2004 and later, [Electron documents](https://jetbrains.github.io/kotlin-wrappers/kotlin-electron/electron.core/-browser-window/set-content-protection.html) that this removes the window from capture entirely. This is what prevents the feedback loop.
 - Background throttling off, hardware acceleration on.
 
 ### Capture requirements
 
 - The main process picks the primary screen as the source and grants it through Electron's [display-media request handler](https://www.electronjs.org/docs/latest/api/desktop-capturer). The renderer then opens the stream.
-- Request 60 fps, cap resolution at 1920×1080, no audio, cursor excluded if the constraint is honoured.
+- Request 60 fps, cap resolution at 960×540 (lowered from 1920×1080 in Phase 0 to hold 50 fps), no audio, and cursor excluded if the constraint is honoured. Chromium does not honour it.
 - Use the video element's per-frame callback so each frame is processed once, with its timestamps.
 
 ### Safety mechanisms
@@ -347,7 +347,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Minimum dim d | 0.4 |
 | Hold, fade | 1.5 s, 0.75 s |
 | Heartbeat, watchdog | 250 ms, 750 ms |
-| Capture | 60 fps, max 1920×1080 |
+| Capture | 60 fps, max 960×540 (was 1920×1080; see Phase 0 results) |
 
 ### Stack and repo layout
 
@@ -387,13 +387,35 @@ With three people, split D between B and C. With two, pair A+B and C+D. Each rol
 
 ### Phase 0: overlay spike (A, Friday 8:00 to 9:30 PM)
 
-- [ ] A transparent overlay with a 30% red tint covers the primary display, and clicks and typing reach the apps underneath.
-- [ ] A debug window showing the live capture has no red tint and no black rectangle where the overlay sits.
-- [ ] Capture delivers at least 50 fps on moving content, and the median capture-to-callback delay is logged.
-- [ ] The overlay stays above a fullscreen YouTube video and a borderless-windowed game.
-- [ ] The kill switch hides it.
+- [x] A transparent overlay with a 30% red tint covers the primary display, and clicks and typing reach the apps underneath.
+- [x] A debug window showing the live capture has no red tint and no black rectangle where the overlay sits.
+- [x] Capture delivers at least 50 fps on moving content, and the median capture-to-callback delay is logged. *Only with the demo-laptop setup and the 960×540 cap below.*
+- [x] The overlay stays above a fullscreen YouTube video and a borderless-windowed game.
+- [x] The kill switch hides it.
 
 If the first two boxes are not ticked by 9:30 PM, stop and switch to the fallback in "Risks and fallbacks".
+
+#### Phase 0 results (Fri Nov 13, measured on the Windows 11 demo laptop)
+
+Boxes 1 and 2 passed by 9:00 PM, so the design stands and no fallback is needed. What we measured and changed:
+
+- **Capture exclusion works.** The window's display affinity reads `0x11` (`WDA_EXCLUDEFROMCAPTURE`). An automatic self-check toggles the overlay's tint and compares the captured frame's red ratio. It changed by 0.000 ± 0.007 on every run, including with video and a game moving. The user confirmed by eye that the preview shows a clean desktop.
+- **The capture frame rate is limited by screen pixels, not by our code.** Chromium copies the full native screen each frame and limits itself to a share of one CPU core, so frame rate falls with screen resolution and CPU clock. The capture size cap barely matters, because the shrink happens after the copy. We tested with a moving bar that changes every display frame:
+
+  | Display | Power mode | Cap 1920×1080 | Cap 1280×720 | Cap 960×540 |
+  | --- | --- | --- | --- | --- |
+  | 2880×1800 | Silent | 24 | 23 | 26 |
+  | 1920×1080 | Best performance | 48 | 42 | 46 |
+  | 1920×1080 | Turbo | 42 | 45 | **54** |
+
+  Runs vary by about ±5 fps. **Decision: capture cap 960×540** (mean 54 fps, range 44 to 59). Detection is unaffected because the grid is 96×54. The cost is that the smoothed copy shown during a hazard is softer. A native capture module (Windows Graphics Capture handing GPU textures to the renderer through Electron's experimental `sharedTexture` API) could reach 60 fps at full resolution. It is a stretch option for the Saturday 6 PM gate.
+- **Demo-laptop setup this depends on:** display at 1920×1080 and 60 Hz, mains power, Turbo mode, discrete GPU off, and no other heavy apps. Not yet tested: the frame rate with Minecraft running at the same time.
+- **Overlay size.** Windows clamped the new overlay to the work area (1440×852), which left the taskbar strip uncovered over fullscreen apps. Setting the bounds after show fixes that. But an overlay that exactly covers the monitor makes Windows treat it as a fullscreen app and hide the taskbar. The overlay therefore stops 1 DIP short of the bottom of the screen (`OVERLAY_BOTTOM_INSET`).
+- **Chromium ignores `cursor: 'never'`.** It reports `cursor: always`, so the cursor is baked into captured frames, and the smoothed copy can show a smeared ghost cursor during a hazard.
+- **The capture-to-callback delay is understated.** `captureTime` is present, but the median is about 1 ms, so Chromium apparently stamps it late. Use the slow-motion measurement for latency.
+- **Chromium shrinks the frame before our shader sees it.** It averages gamma-encoded values. Patterns finer than 2 screen pixels therefore read darker than in true linear light: a 1-pixel checkerboard reads about Y = 0.22, not 0.5. Inverting patterns still cancel, so the fine-pattern exemption holds. The Step 2 acceptance test runs on a generated texture, so it still tests our shader correctly.
+- **Dashboard stacking.** A window can sit above the overlay and be excluded from capture (tested with the debug window). That fixes the dashboard-under-overlay problem noted in CLAUDE.md once the team agrees.
+- **Chromium shares one capture device per screen.** The first stream opened sets the format for every stream. A debug preview opened first at 480×270 and 15 fps dragged the overlay's capture down to the same. Any second capture, including the dashboard in Phase 5, must request exactly the overlay's settings, or better, use data the overlay sends (as the raw thumbnail already does).
 
 ### Phase 1: detector core (B, Friday 8:00 to 11:00 PM)
 
@@ -512,7 +534,7 @@ Two honesty notes for the write-up. The pip package is a community Python port o
 
 This is the end-to-end truth, because it includes the compositor and the display, which the app cannot see.
 
-1. Demo laptop on mains power, brightness fixed, HDR off, room lights low.
+1. Demo laptop in its Phase 0 setup (1920×1080 at 60 Hz, mains power, Turbo, discrete GPU off), brightness fixed, HDR off, room lights low.
 2. Phone on a stand at 240 fps, framing the screen centre and the test page's frame counter.
 3. Use full contrast for this measurement only. The operator starts the burst and looks away while the phone records.
 4. For each of 5, 10 and 15 Hz, record three bursts with protection off and three with it on.
@@ -746,7 +768,7 @@ The one risk that can change the design is the overlay showing up in its own cap
 | Risk | How you will know | What to do |
 | --- | --- | --- |
 | Overlay appears in the capture, or leaves a black rectangle | Phase 0, second checkbox | Drop smoothing. Hold a constant whole-screen contrast reduction during the hazard through the Windows Magnification API's full-screen colour effect, called from a small native binding. Detection is unchanged. I have not verified this API here, so have Claude Code check Microsoft's docs first |
-| Capture is slow | Under 45 fps, or delay over 120 ms in the debug window | Cap capture at 1280×720, plug in mains power, close other GPU-heavy apps. A native capture helper is a last resort |
+| Capture is slow | Under 45 fps, or delay over 120 ms in the debug window | **Happened in Phase 0** (24 fps at 2880×1800). Fixed with display 1920×1080, Turbo, mains and a 960×540 cap (54 fps). If it regresses, close other heavy apps and check the power mode. A native capture helper is a last resort |
 | Overlay does not stay above a fullscreen game | Phase 0, fourth checkbox | Demo games in borderless-windowed mode and list exclusive fullscreen as a limitation |
 | Overlay freezes while opaque | Screen stops updating | Watchdog hides it after 750 ms. Kill switch as backup. Test both before the demo |
 | Float render targets missing | Startup check fails | Unlikely on a recent laptop. Fall back to 8-bit state with α no lower than 0.10 and lean on dimming |

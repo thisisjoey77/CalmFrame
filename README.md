@@ -35,7 +35,14 @@ _TODO (Phase 6): flashes reaching the viewer with protection on and off, respons
 
 ## Limitations
 
-_TODO. Known so far: the first one or two flashes pass before protection lands. DRM-protected video captures as black. Exclusive-fullscreen games may sit above the overlay. Screen recorders can't see the overlay._
+_TODO. Known so far:_
+
+- The first one or two flashes pass before protection lands.
+- DRM-protected video captures as black.
+- Exclusive-fullscreen games may sit above the overlay.
+- Screen recorders can't see the overlay.
+- Capture speed depends on screen resolution and CPU power mode. On our demo laptop, the native 2880×1800 screen captured at about 24 fps. We run it at 1920×1080 in Turbo mode with a 960×540 capture cap (about 54 fps). That makes the smoothed copy shown during a hazard softer.
+- Chromium ignores the request to leave the cursor out of the capture, so a smeared ghost cursor can appear in the smoothed copy.
 
 ## Credits
 

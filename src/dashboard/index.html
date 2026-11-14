@@ -80,9 +80,12 @@
   <body>
     <h1>CalmFrame debug: Phase 0 overlay spike</h1>
 
-    <h2>Live capture (this window's own low-rate copy)</h2>
+    <h2>Live capture (what the overlay sees)</h2>
     <video id="preview" muted playsinline></video>
-    <label><input type="checkbox" id="preview-on" checked /> Preview on</label>
+    <label
+      ><input type="checkbox" id="preview-on" /> Preview on (shares the overlay's capture; leave off
+      when measuring)</label
+    >
 
     <h2>Overlay capture stats</h2>
     <table>
@@ -111,6 +114,14 @@
         <td id="overlay">waiting</td>
       </tr>
     </table>
+
+    <h2>Motion test</h2>
+    <label
+      ><input type="checkbox" id="motion-on" /> Moving bar (changes every display frame, no
+      flashing), for checking the capture frame rate</label
+    >
+    <canvas id="motion" width="440" height="20"></canvas>
+    <div class="hint" id="motion-fps"></div>
 
     <h2>Capture size cap</h2>
     <div id="sizes"></div>

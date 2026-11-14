@@ -72,9 +72,11 @@ export const WATCHDOG_MS = 750
 
 /** Requested capture frame rate. "Capture requirements". */
 export const CAPTURE_FPS = 60
-/** Capture resolution cap. "Capture requirements". */
-export const CAPTURE_MAX_WIDTH = 1920
-export const CAPTURE_MAX_HEIGHT = 1080
+/** Capture resolution cap. "Capture requirements". Lowered from the spec's original
+ *  1920x1080 in Phase 0: only 960x540 held >= 50 fps on the demo laptop (see the spec's
+ *  "Phase 0 results"). Detection is unaffected (96x54 grid); the smoothed copy is softer. */
+export const CAPTURE_MAX_WIDTH = 960
+export const CAPTURE_MAX_HEIGHT = 540
 
 // ---------------------------------------------------------------------------
 // Other fixed values the spec names outside the defaults table
@@ -116,6 +118,11 @@ export const STATS_EVERY_N_FRAMES = 3
 export const THUMBNAIL_MAX_WIDTH = 240
 export const THUMBNAIL_MAX_HEIGHT = 135
 
+/** The overlay stops this many DIP short of the bottom of the display. A topmost window
+ *  that exactly covers the monitor makes Windows treat it as a fullscreen app and hide the
+ *  taskbar. One uncovered row is far below any flash-area limit. Found in Phase 0. */
+export const OVERLAY_BOTTOM_INSET = 1
+
 /** Global shortcut that moves to Disabled and hides the overlay. "Safety mechanisms". */
 export const KILL_SWITCH_ACCELERATOR = 'Control+Alt+Shift+C'
 
@@ -128,19 +135,15 @@ export const DEBUG_TINT_OPACITY = 0.3
 /** Phase 0 pass bar for capture rate on moving content. */
 export const PHASE0_MIN_FPS = 50
 
-/** The debug window's own capture preview, kept small and slow so it barely loads the real capture. */
-export const DEBUG_PREVIEW_FPS = 15
-export const DEBUG_PREVIEW_MAX_WIDTH = 480
-
 /** Capture size caps the debug window can switch between, to find one that reaches 50 fps. */
 export const DEBUG_CAPTURE_SIZES: readonly { maxWidth: number; maxHeight: number }[] = [
-  { maxWidth: CAPTURE_MAX_WIDTH, maxHeight: CAPTURE_MAX_HEIGHT },
+  { maxWidth: 1920, maxHeight: 1080 },
   { maxWidth: 1280, maxHeight: 720 },
   { maxWidth: 960, maxHeight: 540 }
 ]
 /** FPS sweep (env CALMFRAME_FPS_SWEEP=1): wait before starting, then per size a warm-up
  *  and a measuring period. */
-export const FPS_SWEEP_LEAD_MS = 10000
+export const FPS_SWEEP_LEAD_MS = 15000
 export const FPS_SWEEP_WARMUP_MS = 3000
 export const FPS_SWEEP_MEASURE_MS = 9000
 /** Capture frame rate is counted over this rolling window. */

@@ -18,7 +18,8 @@ import {
   FPS_SWEEP_LEAD_MS,
   FPS_SWEEP_MEASURE_MS,
   FPS_SWEEP_WARMUP_MS,
-  KILL_SWITCH_ACCELERATOR
+  KILL_SWITCH_ACCELERATOR,
+  OVERLAY_BOTTOM_INSET
 } from '../shared/config'
 import {
   IPC,
@@ -50,7 +51,9 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 let sweepSamples: number[] | null = null
 
 async function runFpsSweep(): Promise<void> {
-  console.log(`[sweep] starting in ${FPS_SWEEP_LEAD_MS / 1000} s, debug preview off`)
+  console.log(
+    `[sweep] starting in ${FPS_SWEEP_LEAD_MS / 1000} s, debug preview off, motion test on`
+  )
   await sleep(FPS_SWEEP_LEAD_MS)
   const results: string[] = []
   for (const size of DEBUG_CAPTURE_SIZES) {
@@ -79,7 +82,10 @@ const preloadPath = join(__dirname, '../preload/index.js')
  * primary display and excluded from capture (spec: "Overlay window requirements").
  */
 function createOverlayWindow(): BrowserWindow {
-  const { bounds } = screen.getPrimaryDisplay()
+  const display = screen.getPrimaryDisplay().bounds
+  // Full display minus a 1-DIP bottom inset, so Windows doesn't treat the overlay as a
+  // fullscreen app and hide the taskbar (see OVERLAY_BOTTOM_INSET).
+  const bounds = { ...display, height: display.height - OVERLAY_BOTTOM_INSET }
   const win = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
@@ -112,13 +118,13 @@ function createOverlayWindow(): BrowserWindow {
   win.once('ready-to-show', () => {
     win.showInactive()
     // Windows clamps a new window to the work area (screen minus taskbar), which left
-    // the taskbar strip uncovered over fullscreen apps. Re-apply the full display bounds.
+    // the taskbar strip uncovered over fullscreen apps. Re-apply the intended bounds.
     win.setBounds(bounds)
     // Applied again once shown, in case the first call raced window creation.
     win.setContentProtection(true)
     const b = win.getBounds()
     console.log(
-      `[overlay] shown at ${b.width}x${b.height}+${b.x}+${b.y} (DIP; display ${bounds.width}x${bounds.height}), scale ${screen.getPrimaryDisplay().scaleFactor}, content protected: ${win.isContentProtected()}`
+      `[overlay] shown at ${b.width}x${b.height}+${b.x}+${b.y} (DIP; display ${display.width}x${display.height}), scale ${screen.getPrimaryDisplay().scaleFactor}, content protected: ${win.isContentProtected()}`
     )
     sendOverlayState({ visible: true, reason: 'started' })
   })
@@ -157,7 +163,7 @@ function createDebugWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  loadPage(win, 'dashboard', fpsSweep ? 'nopreview' : '')
+  loadPage(win, 'dashboard', fpsSweep ? 'sweep' : '')
   return win
 }
 

@@ -1,9 +1,9 @@
 // Debug window for the Phase 0 spike. Phase 5 replaces it with the real dashboard.
 import {
+  CAPTURE_FPS,
+  CAPTURE_MAX_WIDTH,
   CAPTURE_MAX_HEIGHT,
-  DEBUG_PREVIEW_FPS,
   DEBUG_CAPTURE_SIZES,
-  DEBUG_PREVIEW_MAX_WIDTH,
   PHASE0_MIN_FPS
 } from '../shared/config'
 import type { CaptureStats, SelfCheckResult } from '../shared/messages'
@@ -18,17 +18,16 @@ function setCell(id: string, text: string, cls?: 'ok' | 'bad' | 'warn'): void {
   el.className = cls ?? ''
 }
 
-// Preview: a separate, slow capture so the user can see what capture sees.
+// Preview: lets the user see what capture sees. Off by default. Chromium shares one
+// capture device per screen and the first stream opened sets its format for every
+// stream (Phase 0: a small slow preview opened first dragged the overlay down to
+// 480x270 at 15 fps). So the preview asks for exactly the overlay's settings.
 const preview = $<HTMLVideoElement>('preview')
 let previewStream: MediaStream | null = null
 
 async function startPreview(): Promise<void> {
   try {
-    previewStream = await openScreenStream(
-      DEBUG_PREVIEW_FPS,
-      DEBUG_PREVIEW_MAX_WIDTH,
-      CAPTURE_MAX_HEIGHT
-    )
+    previewStream = await openScreenStream(CAPTURE_FPS, CAPTURE_MAX_WIDTH, CAPTURE_MAX_HEIGHT)
     preview.srcObject = previewStream
     await preview.play()
   } catch (error) {
@@ -94,14 +93,14 @@ $('selfcheck-run').addEventListener('click', () => {
 
 // Size-cap selector: reopens the overlay's capture with a different max size.
 const sizes = $('sizes')
-DEBUG_CAPTURE_SIZES.forEach((size, i) => {
+DEBUG_CAPTURE_SIZES.forEach((size) => {
   const label = document.createElement('label')
   label.style.display = 'inline-block'
   label.style.marginRight = '12px'
   const input = Object.assign(document.createElement('input'), {
     type: 'radio',
     name: 'capture-size',
-    checked: i === 0
+    checked: size.maxWidth === CAPTURE_MAX_WIDTH && size.maxHeight === CAPTURE_MAX_HEIGHT
   })
   input.addEventListener('change', () => api.restartCapture(size))
   label.append(input, ` ${size.maxWidth} × ${size.maxHeight}`)
@@ -112,9 +111,36 @@ $<HTMLInputElement>('on-top').addEventListener('change', (e) => {
   api.setDebugOnTop((e.target as HTMLInputElement).checked)
 })
 
-// The FPS sweep loads this page with #nopreview so the preview capture doesn't skew it.
-if (location.hash === '#nopreview') {
-  $<HTMLInputElement>('preview-on').checked = false
-} else {
-  void startPreview()
+// Motion test: a mid-grey bar sliding across a dark strip, redrawn every display frame,
+// so the screen is guaranteed to change at the display rate. Moves, never flashes.
+const motionCanvas = $<HTMLCanvasElement>('motion')
+const motionCtx = motionCanvas.getContext('2d')
+let motionOn = false
+let motionFrames: number[] = []
+function drawMotion(t: number): void {
+  if (!motionOn || !motionCtx) return
+  const w = motionCanvas.width
+  const h = motionCanvas.height
+  const barWidth = w / 8
+  const x = ((t / 1000) * w * 0.5) % (w + barWidth)
+  motionCtx.fillStyle = '#303030'
+  motionCtx.fillRect(0, 0, w, h)
+  motionCtx.fillStyle = '#7a7a7a'
+  motionCtx.fillRect(x - barWidth, 0, barWidth, h)
+  motionFrames.push(t)
+  motionFrames = motionFrames.filter((f) => t - f <= 1000)
+  $('motion-fps').textContent = `this window redraws at ${motionFrames.length} fps`
+  requestAnimationFrame(drawMotion)
 }
+function setMotion(on: boolean): void {
+  motionOn = on
+  $<HTMLInputElement>('motion-on').checked = on
+  if (on) requestAnimationFrame(drawMotion)
+}
+$<HTMLInputElement>('motion-on').addEventListener('change', (e) => {
+  setMotion((e.target as HTMLInputElement).checked)
+})
+
+// The FPS sweep loads this page with #sweep: motion test on so the screen changes every
+// frame. The preview stays off unless the user turns it on.
+if (location.hash === '#sweep') setMotion(true)

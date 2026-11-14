@@ -18,13 +18,16 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 
 ## Commands
 
-- `npm run dev`: run the app (currently opens an empty dashboard window)
+- `npm run dev`: run the app (Phase 0 state: red-tint overlay plus the debug window; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits)
+- `CALMFRAME_FPS_SWEEP=1 npm run dev`: measures the capture frame rate at each size cap with a moving test bar and logs a summary. Use it to check the demo-laptop setup.
 - `npm test`: Vitest, run once (`npm run test:watch` to watch)
 - `npm run typecheck`: three projects. core (src/core + src/shared, pure), node (main, preload, tests, tools), web (renderers)
 - `npm run lint`
 - `npm run build:win`: packaged Windows installer
 
 Before every commit, `npm run typecheck && npm run lint && npm test` must pass.
+
+**Demo-laptop setup (Phase 0 found the capture rate depends on it).** Display at 1920×1080 and 60 Hz, mains power, Turbo mode, discrete GPU off, and no other heavy apps. The native 2880×1800 screen only captures at about 24 fps. See "Phase 0 results" in the spec.
 
 **Launching the app from Claude Code inside VS Code.** Its shells inherit `ELECTRON_RUN_AS_NODE=1` from VS Code. Electron then starts as plain Node and crashes with `Cannot read properties of undefined (reading 'isPackaged')`. Launch with `env -u ELECTRON_RUN_AS_NODE npm run dev` (Bash tool), or `Remove-Item Env:ELECTRON_RUN_AS_NODE; npm run dev` (PowerShell). A normal terminal doesn't need this.
 
@@ -86,6 +89,6 @@ We don't know the judging criteria yet (ask at the Saturday 4:30 PM MLH workshop
 - Nobody with known or suspected photosensitivity runs strobe tests. Use low-contrast test flashes by default, in short bursts, in a small window.
 - In the README, Devpost, the UI and the pitch, never say "prevents seizures", "certified", "WCAG compliant" or "validated by EA". Say "reduces exposure", "implements the WCAG flash thresholds" and "compared against IRIS (Python port)".
 
-## Open questions (settle in the phase named)
+## Open questions
 
-- **Dashboard vs overlay stacking (Phase 0, then Phase 5).** While the overlay is solid, it covers the whole screen, including the dashboard. The judge would then see a smoothed, lagging copy of the graph. The "raw input" thumbnail would be smoothed to grey. And the "protected preview" pane would capture itself. Proposed fix: give the dashboard content protection too, and keep it above the overlay. In Phase 0, check whether two always-on-top windows can be ordered reliably on Windows. Don't change the spec until the user agrees.
+- **Dashboard vs overlay stacking (decide before Phase 5).** While the overlay is solid, it covers the whole screen, including the dashboard. The judge would see a smoothed, lagging copy of the graph, the raw thumbnail smoothed to grey, and a "protected preview" that captures itself. Phase 0 showed the fix works: a window set always-on-top after the overlay, with content protection, sits above it and stays out of the capture (tested with the debug window's stacking checkbox). Waiting on the user's go-ahead before changing the spec.
