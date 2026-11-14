@@ -452,9 +452,9 @@ All seven boxes pass, with 116 tests in `src/core`. The end-to-end check under "
 
 ### Phase 2: strobe test page (C, Friday 8:00 to 9:30 PM)
 
-- [ ] Controls for frequency (1 to 30 Hz, snapped to what the display can show), the two grey levels, area as a share of the window, colour mode (grey or red and black) and burst length.
-- [ ] A frame counter and millisecond timestamp are drawn on screen for the slow-motion footage.
-- [ ] It starts paused behind a warning, Esc stops it, it auto-stops after 5 s, and it defaults to low contrast (a 0.2 swing between two greys).
+- [x] Controls for frequency (1 to 30 Hz, snapped to what the display can show), the two grey levels, area as a share of the window, colour mode (grey or red and black) and burst length.
+- [x] A frame counter and millisecond timestamp are drawn on screen for the slow-motion footage.
+- [x] It starts paused behind a warning, Esc stops it, it auto-stops after 5 s, and it defaults to low contrast (a 0.2 swing between two greys).
 
 #### Phase 2 notes (Fri Nov 13, built on the Mac)
 
@@ -464,6 +464,14 @@ Two decisions the spec did not fix, recorded because CLAUDE.md requires deviatio
 - **The cap on the swing while full contrast is off is 0.3.** The spec fixes the default swing (0.2) and says full contrast is a separate toggle, off by default, for the slow-motion measurement only, but it does not say what the range in between is. The page clamps the two greys to a 0.3 swing until the toggle is on, which keeps the default range low-contrast while still allowing either side of the 0.10 detection threshold to be explored.
 
 Everything else is as specified. Each half-cycle is a whole number of display frames, the frequency control offers only `refresh / 2n`, and the burst's achieved frequency is measured between its first and last transition so a part-finished half-cycle cannot bias it low.
+
+#### Phase 2 verification (Fri Nov 13, Windows demo laptop, 1920×1080 at 60 Hz, mains, Turbo)
+
+- **The warning gate didn't open in any browser.** `#gate { display: grid }` overrode the `hidden` attribute, so the button did nothing. Fixed with a global `[hidden] { display: none !important }`. The Mac's unit tests cover `strobe.js` but not the page, so they could not catch it.
+- **Snapping and frame counts are right.** The 5, 10 and 15 Hz buttons give 6, 3 and 2 frames per half-cycle. A 10 Hz burst achieved 10.01 Hz.
+- **The slider labels read about 0.4% high** (15.06 rather than 15). The refresh estimate takes the median gap between frame timestamps, which the browser rounds to 0.1 ms. That gives 16.6 ms, so 60.24 Hz. The flash itself counts whole frames and is unaffected. Follow-up for the Mac: estimate from the total span, or snap to the nominal rate when within 1%.
+- **Slow motion works.** In 240 fps iPhone footage of a 10 Hz burst, FRAME, MS and PHASE (HI/LO) were readable, confirmed by eye.
+- **Safety behaviour checked by hand.** The page loads behind the gate, and Esc or a click stops a burst. The maximum burst stops itself at 5 s. Loaded in a hidden window, the defaults read greys 89 and 149, 25% area, a 3 s burst and full contrast off.
 
 ### Phase 3: live detection (A and B, Friday 9:30 PM to Saturday 1:00 AM)
 
