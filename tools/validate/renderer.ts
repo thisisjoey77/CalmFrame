@@ -14,6 +14,10 @@
  * `delayFrames`, over the screen as it is by then. So the first flash or two of a burst get
  * through, as they do live.
  *
+ * Game mode (experimental, "Game mode" in the spec) swaps the calming for zoneDim.ts: big
+ * zones, brightness only, dimmed and never lifted. It also draws its picture on every
+ * frame, hazard or not, so the viewer's delay never changes.
+ *
  * This file has no ffmpeg or file access, so the tests drive it with generated frames.
  * render.ts is the command around it.
  */
@@ -24,10 +28,13 @@ import { SRGB8_TO_LINEAR, linearToSrgb } from '../../src/core/luminance'
 import { ReferenceFilter } from '../../src/core/referenceFilter'
 import { correctImage } from '../../src/core/regionCorrect'
 import { OverlayStateMachine } from '../../src/core/stateMachine'
+import { ZoneDimTargets, dimImage, gridToZones } from '../../src/core/zoneDim'
 import {
   ALPHA_WARM,
   DASHBOARD_GRAPH_MIN_Y_MAX,
   DEFAULT_FLASH_LIMIT,
+  GAME_ZONE_COLS,
+  GAME_ZONE_ROWS,
   GRID_CELLS,
   GRID_COLS,
   GRID_ROWS,
@@ -223,6 +230,9 @@ function encode(linear: number): number {
 /** One overlay picture waiting to reach the viewer. */
 interface Pending {
   opacity: number
+  /** The detector had the overlay on for this frame. The same as opacity > 0, except in
+   *  game mode, where the picture is drawn on every frame. */
+  active: boolean
   /** Linear R, G, B per pixel: what the overlay draws. Only filled when opacity > 0. */
   picture: Float32Array
 }
@@ -244,7 +254,11 @@ class FlaggedSeconds {
 }
 
 /** The app's words for the settings, for the picture and the report. */
-export function describeSettings(settings: Settings, delayFrames: number): string[] {
+export function describeSettings(
+  settings: Settings,
+  delayFrames: number,
+  gameMode = false
+): string[] {
   const s = settings.sensitivity
   const names = ['MOST SENSITIVE', 'STANDARD', 'FEWER FALSE ALARMS']
   const sensitivity =
@@ -254,7 +268,9 @@ export function describeSettings(settings: Settings, delayFrames: number): strin
   return [
     `SENSITIVITY: ${sensitivity}`,
     `IGNORE MOVEMENT: ${settings.concurrency === 'one-way' ? 'ON' : 'OFF'}`,
-    `KEEP MOTION SHARP: ${settings.mitigation === 'correct' ? 'ON' : 'OFF'}`,
+    gameMode
+      ? 'GAME MODE: ON'
+      : `KEEP MOTION SHARP: ${settings.mitigation === 'correct' ? 'ON' : 'OFF'}`,
     `OVERLAY DELAY: ${delayFrames} ${delayFrames === 1 ? 'FRAME' : 'FRAMES'}`
   ]
 }
@@ -282,6 +298,9 @@ export class ClipRenderer {
   private readonly smoothed: Float32Array | null
   /** 'correct': the per-cell targets. */
   private readonly targets: ReferenceFilter | null
+  /** Game mode: each zone's brightness now, and its target. */
+  private readonly zones: Float64Array | null
+  private readonly zoneTargets: ZoneDimTargets | null
   private readonly pending: Pending[]
   private readonly pane: Uint8Array
   private readonly small: Uint8Array | null
@@ -306,12 +325,15 @@ export class ClipRenderer {
   /**
    * @param fps the constant frame rate of the frames to come
    * @param delayFrames how many frames late the overlay's picture reaches the viewer
+   * @param gameMode calm with zoneDim.ts and keep the overlay's picture up all the time,
+   *        whatever the settings' mitigation method says
    */
   constructor(
     private readonly layout: Layout,
     private readonly settings: Settings = DEFAULT_SETTINGS,
     private readonly fps: number,
-    private readonly delayFrames: number
+    private readonly delayFrames: number,
+    private readonly gameMode = false
   ) {
     if (!(fps > 0)) throw new Error(`The frame rate must be positive, got ${fps}`)
     if (!Number.isInteger(delayFrames) || delayFrames < 0) {
@@ -340,10 +362,14 @@ export class ClipRenderer {
         ? new Uint8Array(originalPane.w * originalPane.h * 4).fill(255)
         : null
     const sharp = settings.mitigation === 'correct'
-    this.smoothed = sharp ? null : new Float32Array(pixels * 3)
-    this.targets = sharp ? new ReferenceFilter(GRID_CELLS) : null
+    this.smoothed = gameMode || sharp ? null : new Float32Array(pixels * 3)
+    this.targets = !gameMode && sharp ? new ReferenceFilter(GRID_CELLS) : null
+    const zoneCount = GAME_ZONE_COLS * GAME_ZONE_ROWS
+    this.zones = gameMode ? new Float64Array(zoneCount) : null
+    this.zoneTargets = gameMode ? new ZoneDimTargets(zoneCount) : null
     this.pending = Array.from({ length: delayFrames + 1 }, () => ({
       opacity: 0,
+      active: false,
       picture: new Float32Array(pixels * 3)
     }))
     const options = { inputChannels: 4 as const, ...detectorOptionsFor(settings) }
@@ -387,6 +413,9 @@ export class ClipRenderer {
         g3[b + 2] = grid[a + 2]
       }
       this.targets.step(g3, alpha)
+    } else if (this.zones && this.zoneTargets) {
+      gridToZones(grid, 4, GRID_COLS, GRID_ROWS, GAME_ZONE_COLS, GAME_ZONE_ROWS, this.zones)
+      this.zoneTargets.step(this.zones, alpha)
     }
 
     const d = this.detector.step(grid, tMs)
@@ -397,15 +426,16 @@ export class ClipRenderer {
 
     // What the overlay draws for this frame (the app's Pass C), queued for the viewer.
     const now = this.pending[n % this.pending.length]
-    now.opacity = out.opacity
-    if (out.opacity > 0) this.drawOverlay(now.picture, out.dim, out.red)
+    now.opacity = this.gameMode ? 1 : out.opacity
+    now.active = out.opacity > 0
+    if (now.opacity > 0) this.drawOverlay(now.picture, out.dim, out.red)
 
     // What the viewer sees: the overlay drawn `delayFrames` ago, over the screen as it is now.
     const shown =
       n >= this.delayFrames ? this.pending[(n - this.delayFrames) % this.pending.length] : null
     const opacity = shown ? shown.opacity : 0
     this.drawPane(rgba, shown ? shown.picture : null, opacity)
-    const on = opacity > 0
+    const on = shown ? shown.active : false
     if (on) {
       this.overlayFrames++
       if (!this.overlayWasOn) this.episodes++
@@ -455,6 +485,17 @@ export class ClipRenderer {
         this.targets.state,
         GRID_COLS,
         GRID_ROWS,
+        picture
+      )
+    } else if (this.zones && this.zoneTargets) {
+      dimImage(
+        this.linear,
+        this.w,
+        this.h,
+        this.zones,
+        this.zoneTargets.state,
+        GAME_ZONE_COLS,
+        GAME_ZONE_ROWS,
         picture
       )
     }
@@ -622,7 +663,7 @@ export class ClipRenderer {
       STATUS_SCALE,
       COLORS.text
     )
-    describeSettings(this.settings, this.delayFrames).forEach((words, i) => {
+    describeSettings(this.settings, this.delayFrames, this.gameMode).forEach((words, i) => {
       drawText(
         canvas,
         words,

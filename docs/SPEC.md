@@ -452,6 +452,38 @@ A finer correction grid shrinks the rim (0.19 of the limit at 192×108) and keep
 
 **Not yet checked on screen.** The numbers above are offline. How it looks at 1920×1080 and 60 fps, and how visible the rim is on real content, need the user's eyes: the low-contrast strobe page first, then real clips.
 
+### Game mode (experimental, the offline render only)
+
+Added Sat Nov 14, from tests on Geometry Dash recordings. In a fast side-scrolling game the smoothing filter is unplayable: it kept 37% of the picture's detail on one level. The brightness correction keeps the picture, but on a level flashing 11 times a second it washes everything out to pale grey, because it lifts dark frames toward white. Game mode is a third way to calm a hazard, built so far only into the offline render (`npm run render -- <video> --game-mode on`), so it can be judged on whole levels before anything is added to the app. `src/core/zoneDim.ts`.
+
+- **Big zones.** Brightness is steadied in 16×9 zones (6×6 grid cells each, about 120 px on the demo laptop), blended smoothly. The correction then changes slowly across the picture and draws no halo around every obstacle.
+- **Brightness only.** One factor scales red, green and blue together, so a pixel keeps its hue and its contrast against its neighbours.
+- **Dim, never whiten.** A zone's target follows its brightness down at once and up only at half the smoothing filter's α. So the target is never above what the zone is now: bright frames are dimmed to the level of the dark ones and nothing is lifted. Black stays black. Half α, because a target that only rises between dark frames leaves a swing of ΔL (1 − βⁿ), about twice what the two-sided average leaves.
+- **Always drawn.** The picture is drawn on every frame, hazard or not, with the safe-state α in between. The viewer's delay is then constant, where the other methods jump between the live screen and a late copy each time the overlay comes and goes. In a timing game a steady delay can be learned.
+
+Detection is unchanged: the same thresholds, sensitivity and flash limit decide when the hazard strength applies.
+
+**Offline results (Sat Nov 14, a scratch prototype, 640×360, default sensitivity unless noted).** "Detail kept" is the correlation between the output's edges and the current frame's. Flagged seconds are at the standard: the strict trigger and the limit of 3.
+
+| Level section | Original flagged | Smoothing | Brightness correction | 16×9 zones, meeting in the middle | Game mode |
+| --- | --- | --- | --- | --- | --- |
+| A hard level, 22 s, flashing up to 11 times a second: flagged seconds | 22 | 0 | 0 | 0 | 0 |
+| The same: detail kept | 1.0 | 0.37 | 0.86 | 0.94 | 0.92 |
+| The same: mean brightness, 0 to 255 | 108 | n/a | n/a | 117 | 48 |
+| A dark level, 30 s: flagged seconds | 15 | n/a | n/a | 0 | 0 |
+| The same: mean brightness | 63 | n/a | n/a | 83 | 30 |
+
+Zones of 32×18 did as well as 16×9. Zones of 8×5 let 2 of the 22 seconds through. Scaling by one factor in both directions, brightening as well as dimming, was the most colourful and left 9 of the 22 seconds flagged, so it was dropped.
+
+**What it gives up,** pinned by tests in `src/core/zoneDim.test.ts`:
+
+- **The picture is darker while the game flashes:** under half the original's brightness on both levels above. On an already dark level it is hard to see. A floor, or a setting partway toward meeting in the middle, would trade some haze for brightness. Neither is built or tested.
+- **A flash down to black takes the picture down to black.** Black cannot be dimmed and is never lifted.
+- **It steadies zones, not pixels.** A small flashing object is only partly calmed, less than with the brightness correction's small cells. The planned safety net, falling back to small cells when the viewer check still sees a hazard, is not built.
+- **Not in the app.** No GPU pass, no setting, no on-screen check. Whether a game is playable through it is unknown.
+
+A level that stays under the limit needs none of this. The official level Electrodynamix peaks at 2.5 flashes a second: the strict trigger never fires on it, and the default sensitivity fires in 3 of its 107 seconds.
+
 ## Architecture
 
 CalmFrame is one Electron app with three windows and one hot loop. All per-frame work lives in the overlay window's renderer, so no frame ever crosses a process boundary and adds latency.
@@ -979,7 +1011,7 @@ A switch that made the overlay visible to recorders would make it visible to the
 `npm run render -- <video>` (`tools/validate/render.ts`) reads a video file, a normal screen recording for example, and writes a 1920×1080 video of what CalmFrame's viewer would see, next to the original.
 
 - **The same code as the app.** Every frame goes through the grid average, the detector and the overlay state machine from `src/core`. The picture is then calmed per pixel on the CPU with the arithmetic the GPU passes are checked against at startup: the smoothing filter, or the brightness correction.
-- **The app's settings, as options, with the app's defaults:** `--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`.
+- **The app's settings, as options, with the app's defaults:** `--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`. One more option has no counterpart in the app yet: `--game-mode on` (see "Game mode" under "Mitigation math").
 - **Layouts:** `big-small` (the default: the protected picture at 1280×720 and the original at 640×360), `equal` (two at 960×540) and `protected-only` (the protected picture alone, full frame, no text, for editing). The original is small by default on purpose: it is unprotected flashing in a video other people will watch, and at 11% of the frame it stays under the quarter of the frame IRIS allows.
 - **What is written into the picture:** by default only the two labels ("With CalmFrame", "Original (unprotected)") and the flashes-per-second graph with its limit line. `--info full` adds the status, the settings used and a line saying the footage is an offline render. The user chose the plain picture as the default (Sat Nov 14), to keep the frame clean for the demo video.
 - **It does not flatter the app.** As in the app, a frame is filtered with the strength decided on the frame before. The overlay's picture then reaches the viewer `--delay-frames` late (default 1, the measured capture-to-drawn time at 60 fps), over the screen as it is by then. So the first flash or two of each burst get through, as they do live.

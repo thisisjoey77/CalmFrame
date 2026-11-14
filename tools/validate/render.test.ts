@@ -129,6 +129,33 @@ describe('offline render: the pipeline', () => {
     expect(strict).toBeGreaterThan(standard)
   })
 
+  it('game mode: dims a strobe between two greys, never brightens, and is always drawn', () => {
+    // 10 Hz between sRGB 80 and 230, after a lead-in at the dark level.
+    const level = (n: number): number =>
+      n < LEAD_IN ? 80 : Math.floor((n - LEAD_IN) / 3) % 2 === 0 ? 230 : 80
+    const renderer = new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, 1, true)
+    const { w, h } = SMALL.protectedPane
+    const frame = new Uint8Array(w * h * 4).fill(255)
+    const seen: number[] = []
+    for (let n = 0; n < 240; n++) {
+      const v = level(n)
+      for (let p = 0; p < frame.length; p += 4) frame[p] = frame[p + 1] = frame[p + 2] = v
+      const canvas = renderer.frame(frame)
+      const code = canvas[(50 * SMALL.width + 90) * 4]
+      // Never brighter than the brighter of this frame and the one before (one frame late).
+      expect(code).toBeLessThanOrEqual(Math.max(v, level(Math.max(0, n - 1))) + 1)
+      seen.push(SRGB8_TO_LINEAR[code])
+    }
+    expect(swing(seen.slice(120))).toBeLessThan(LUMINANCE_THRESHOLD)
+    // It settles near the dark level, not in the middle.
+    expect(Math.max(...seen.slice(120))).toBeLessThan(SRGB8_TO_LINEAR[80] + LUMINANCE_THRESHOLD)
+    // The detector still had the overlay on for the burst, and the report counts that.
+    const s = renderer.summary()
+    expect(s.episodes).toBe(1)
+    expect(s.firstOverlayFrame).toBe(LEAD_IN + 6 + 1)
+    expect(s.standard.protectedPane).toBe(0)
+  })
+
   it('refuses a layout or a delay it cannot draw', () => {
     expect(() => new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, -1)).toThrow()
     expect(() => new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, 1.5)).toThrow()
@@ -205,9 +232,11 @@ describe('offline render: layouts and words', () => {
         },
         2
       ),
+      ...describeSettings(DEFAULT_SETTINGS, 1, true),
       describeLimit(3),
       describeLimit(7)
     ]
+    expect(lines).toContain('GAME MODE: ON')
     expect(lines).toContain('SENSITIVITY: STANDARD (3 CHANGES)')
     expect(lines).toContain('IGNORE MOVEMENT: ON')
     expect(lines).toContain('KEEP MOTION SHARP: OFF')
@@ -294,6 +323,8 @@ describe('offline render: the command line', () => {
       out: 'demo.mp4'
     })
     expect(parseRenderArgs(['clip.mp4', '--info', 'full']).info).toBe('full')
+    expect(parseRenderArgs(['clip.mp4']).gameMode).toBe(false)
+    expect(parseRenderArgs(['clip.mp4', '--game-mode', 'on']).gameMode).toBe(true)
     expect(parseRenderArgs(['clip.mp4', '--sensitivity', '4']).settings.sensitivity).toEqual({
       trigger: 'early',
       streakN: 4
@@ -312,6 +343,7 @@ describe('offline render: the command line', () => {
       ['clip.mp4', '--flash-limit', '4.5'],
       ['clip.mp4', '--layout', 'triple'],
       ['clip.mp4', '--info', 'everything'],
+      ['clip.mp4', '--game-mode', 'yes'],
       ['clip.mp4', '--delay-frames', '9'],
       ['clip.mp4', '--fps', '120'],
       ['clip.mp4', '--start', '-1']

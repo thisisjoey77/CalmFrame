@@ -480,3 +480,18 @@ export const RENDER_FALLBACK_FPS = 30
 export const RENDER_CRF = 16
 /** Time span of the render's flashes-per-second graph. */
 export const RENDER_GRAPH_WINDOW_MS = 10000
+
+// ---------------------------------------------------------------------------
+// Game mode (experimental; the offline render only so far)
+// ---------------------------------------------------------------------------
+
+/** Game mode steadies brightness in zones this many across and down, each 6x6 cells of the
+ *  analysis grid. Tried offline on Geometry Dash recordings (Sat Nov 14): 32x18 and 16x9
+ *  calmed the flashing as well as the full grid and kept more of the picture, and 8x5 let
+ *  flashing through. Spec: "Game mode (experimental)". */
+export const GAME_ZONE_COLS = 16
+export const GAME_ZONE_ROWS = 9
+/** A zone's target rises at this share of the smoothing filter's alpha (it drops at once).
+ *  Half, because a one-sided target leaves about twice the swing of the two-sided average
+ *  for the same alpha. */
+export const GAME_RISE_FACTOR = 0.5

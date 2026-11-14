@@ -14,6 +14,10 @@
  *   --ignore-movement on|off       "Ignore movement" (on)
  *   --keep-motion-sharp on|off     "Keep motion sharp" (off)
  *   --flash-limit 3..10            the flash limit, per second (3, the WCAG limit)
+ * and one the app does not have yet:
+ *   --game-mode on|off             experimental (off): calm by dimming in big zones, never
+ *                                  lifting toward white, with the overlay always up. It
+ *                                  replaces the method --keep-motion-sharp chooses.
  * and how to draw it:
  *   --layout big-small|equal|protected-only   (big-small)
  *   --info graph|full              what is written into the picture besides the two labels:
@@ -61,6 +65,7 @@ import {
 
 export const USAGE = `usage: render <video> [--out file.mp4]
   [--sensitivity 2|3|4|strict] [--ignore-movement on|off] [--keep-motion-sharp on|off]
+  [--game-mode on|off]
   [--flash-limit ${FLASH_LIMIT_MIN}..${FLASH_LIMIT_MAX}] [--layout ${LAYOUT_NAMES.join('|')}] [--info ${INFO_LEVELS.join('|')}]
   [--delay-frames 0..${RENDER_MAX_DELAY_FRAMES}] [--fps N] [--start seconds] [--duration seconds]`
 
@@ -68,6 +73,7 @@ export interface RenderArgs {
   file: string
   out: string | null
   settings: Settings
+  gameMode: boolean
   layout: LayoutName
   info: InfoLevel
   delayFrames: number
@@ -81,6 +87,7 @@ const FLAGS = new Set([
   '--sensitivity',
   '--ignore-movement',
   '--keep-motion-sharp',
+  '--game-mode',
   '--flash-limit',
   '--layout',
   '--info',
@@ -166,6 +173,9 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
     settings.flashLimit = parsed
   }
 
+  const game = values.get('--game-mode')
+  const gameMode = game === undefined ? false : onOff('--game-mode', game)
+
   const layout = values.get('--layout') ?? 'big-small'
   if (!LAYOUT_NAMES.includes(layout as LayoutName)) {
     throw new Error(`--layout takes one of ${LAYOUT_NAMES.join(', ')}, got "${layout}"`)
@@ -182,6 +192,7 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
     file: files[0],
     out: values.get('--out') ?? null,
     settings,
+    gameMode,
     layout: layout as LayoutName,
     info: info as InfoLevel,
     delayFrames:
@@ -213,7 +224,7 @@ export function reportText(
     `CalmFrame offline render of ${basename(args.file)}`,
     `Wrote ${out}`,
     `${s.frames} frames at ${fps} fps, ${s.durationS.toFixed(1)} s, layout ${args.layout}`,
-    `Settings: ${lower(describeSettings(args.settings, args.delayFrames))}, ${describeLimit(args.settings.flashLimit).toLowerCase()}`,
+    `Settings: ${lower(describeSettings(args.settings, args.delayFrames, args.gameMode))}, ${describeLimit(args.settings.flashLimit).toLowerCase()}`,
     '',
     `The overlay was on for ${s.overlayS.toFixed(1)} s of ${s.durationS.toFixed(1)} s, in ${s.episodes} ${s.episodes === 1 ? 'stretch' : 'stretches'}.`,
     '',
@@ -248,7 +259,7 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const layout = layoutFor(args.layout, args.info)
-  const renderer = new ClipRenderer(layout, args.settings, fps, args.delayFrames)
+  const renderer = new ClipRenderer(layout, args.settings, fps, args.delayFrames, args.gameMode)
   const writer = new FrameWriter(ffmpeg, out, layout.width, layout.height, fps, RENDER_CRF)
   const frames = readFrames(ffmpeg, file, {
     width: layout.protectedPane.w,
