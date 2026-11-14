@@ -1,0 +1,15 @@
+{
+  // src/core and src/shared must be pure TypeScript: no Electron, DOM or Node.
+  // lib is ES only and types is empty, so `document`, `window`, `process`,
+  // `performance` and `console` do not exist here and the typecheck fails if
+  // they are used. Timing comes in as capture timestamps, never from a clock.
+  "extends": "@electron-toolkit/tsconfig/tsconfig.json",
+  "include": ["src/core/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/core/testing/**"],
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ESNext"],
+    "types": [],
+    "noImplicitAny": true
+  }
+}

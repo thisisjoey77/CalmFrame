@@ -1,0 +1,14 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "src/overlay/**/*.ts",
+    "src/dashboard/**/*.ts",
+    "src/core/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/preload/*.d.ts"
+  ],
+  "exclude": ["src/**/*.test.ts", "src/core/testing/**"],
+  "compilerOptions": {
+    "composite": true
+  }
+}
