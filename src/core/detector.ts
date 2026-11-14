@@ -12,6 +12,7 @@ import {
   AREA_LIMIT,
   DEFAULT_AREA_MODE,
   DEFAULT_CONCURRENCY_RULE,
+  DEFAULT_FLASH_LIMIT,
   DEFAULT_TRIGGER_MODE,
   EARLY_TRIGGER_STREAK,
   EXTENDED_FAIL_MAX_TRANSITIONS,
@@ -28,7 +29,8 @@ import {
   PREARM_ENABLED,
   PREARM_TRIGGER_STREAK,
   RED_THRESHOLD,
-  STRICT_TRIGGER_COUNT,
+  fastTransitionIntervalMs,
+  strictTriggerCount,
   type AreaMode,
   type ConcurrencyRule,
   type TriggerMode
@@ -56,6 +58,11 @@ export interface DetectorOptions {
   trigger?: TriggerMode
   /** N for the early trigger; the sensitivity slider's 2, 3 or 4. Step 7. */
   streakN?: number
+  /** The flash-rate limit in flashes per second. Default 3, the standard's. It sets how
+   *  close together transitions must be to build a streak (1 / (2 x limit) s) and the
+   *  strict trigger's count (2 x limit + 1). Above 3 is for testing only: flashing the
+   *  standard counts as a hazard is then let through. Step 7. */
+  flashLimit?: number
   /** Window for the area rule. Step 6. */
   areaMode?: AreaMode
   /** Required for the calibrated area mode. */
@@ -113,20 +120,13 @@ export class Detector {
   readonly window: AreaWindow
   private readonly trigger: TriggerMode
   private readonly streakN: number
+  private readonly strictCount: number
   private readonly extendedEnabled: boolean
   private readonly prearmEnabled: boolean
   private readonly channels: number
 
-  private readonly lum = new TransitionTracker({
-    cells: GRID_CELLS,
-    threshold: LUMINANCE_THRESHOLD,
-    kind: 'luminance'
-  })
-  private readonly red = new TransitionTracker({
-    cells: GRID_CELLS,
-    threshold: RED_THRESHOLD,
-    kind: 'red'
-  })
+  private readonly lum: TransitionTracker
+  private readonly red: TransitionTracker
 
   private readonly lumY = new Float64Array(GRID_CELLS)
   private readonly redV = new Float64Array(GRID_CELLS)
@@ -149,6 +149,22 @@ export class Detector {
   constructor(options: DetectorOptions = {}) {
     this.trigger = options.trigger ?? DEFAULT_TRIGGER_MODE
     this.streakN = options.streakN ?? EARLY_TRIGGER_STREAK
+    const flashLimit = options.flashLimit ?? DEFAULT_FLASH_LIMIT
+    if (!(flashLimit > 0)) throw new Error(`The flash limit must be positive, got ${flashLimit}`)
+    this.strictCount = strictTriggerCount(flashLimit)
+    const fastIntervalMs = fastTransitionIntervalMs(flashLimit)
+    this.lum = new TransitionTracker({
+      cells: GRID_CELLS,
+      threshold: LUMINANCE_THRESHOLD,
+      kind: 'luminance',
+      fastIntervalMs
+    })
+    this.red = new TransitionTracker({
+      cells: GRID_CELLS,
+      threshold: RED_THRESHOLD,
+      kind: 'red',
+      fastIntervalMs
+    })
     this.extendedEnabled = options.extendedFailure ?? false
     this.prearmEnabled = options.prearm ?? PREARM_ENABLED
     this.channels = options.inputChannels ?? 3
@@ -305,8 +321,9 @@ export class Detector {
     let n = 0
     if (this.trigger === 'strict') {
       const count = tracker.count
+      const needed = this.strictCount
       for (let i = 0; i < CELLS; i++) {
-        const h = count[i] >= STRICT_TRIGGER_COUNT ? 1 : 0
+        const h = count[i] >= needed ? 1 : 0
         hot[i] = h
         n += h
       }

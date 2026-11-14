@@ -28,8 +28,23 @@ export const RED_THRESHOLD = 20
 /** Saturated red: R / (R + G + B) at or above this in at least one state. Step 3. */
 export const RED_RATIO = 0.8
 
+/** The flash-rate limit, in flashes per second: WCAG's "no more than three flashes within
+ *  any one-second period". The fast-transition interval, the strict trigger's count and the
+ *  graph's limit line all follow from it. Step 7. */
+export const DEFAULT_FLASH_LIMIT = 3
+/** The dashboard's flash-limit slider, a testing control: whole numbers from the standard's
+ *  3 up to this. Above 3, CalmFrame lets through flashing that the standard counts as a
+ *  hazard, so the limit is never saved: it is back at 3 at every launch. Step 7. */
+export const FLASH_LIMIT_MIN = DEFAULT_FLASH_LIMIT
+export const FLASH_LIMIT_MAX = 10
+
 /** Max gap between transitions for them to extend a streak (1/6 s, rounded). Step 5. */
 export const FAST_TRANSITION_INTERVAL_MS = 167
+/** The same for any flash limit: more than `flashLimit` flashes a second means less than
+ *  1 / (2 x flashLimit) s between transitions. 167 ms at the standard's 3. Step 5. */
+export function fastTransitionIntervalMs(flashLimit: number): number {
+  return Math.ceil(1000 / (2 * flashLimit))
+}
 /** Window over which a cell's transition count c is taken. Step 5. */
 export const COUNT_WINDOW_MS = 1000
 
@@ -157,6 +172,11 @@ export const EXTENDED_FAIL_RING_CAPACITY = 1024
 
 /** Strict trigger: a cell is hot when its 1 s count c reaches this. Step 7. */
 export const STRICT_TRIGGER_COUNT = 7
+/** The same for any flash limit: more than `flashLimit` flashes in a second is more than
+ *  2 x flashLimit transitions. 7 at the standard's 3. Step 7. */
+export function strictTriggerCount(flashLimit: number): number {
+  return 2 * flashLimit + 1
+}
 /** Sensitivity slider steps for N; the step after the last is strict mode. Step 7. */
 export const SENSITIVITY_STREAK_STEPS: readonly number[] = [2, 3, 4]
 
@@ -175,7 +195,7 @@ export type AreaMode = 'wcag' | 'calibrated' | 'iris'
 export const DEFAULT_AREA_MODE: AreaMode = 'wcag'
 
 /** Flashes-per-second limit line drawn on the hazard graph. Step 8. */
-export const GRAPH_LIMIT_FLASHES_PER_SEC = 3
+export const GRAPH_LIMIT_FLASHES_PER_SEC = DEFAULT_FLASH_LIMIT
 
 /** Blend toward grey applied to the output during a red hazard. "Red flashes". */
 export const RED_DESATURATION = 0.5

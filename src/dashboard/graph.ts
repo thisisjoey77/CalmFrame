@@ -41,6 +41,8 @@ export class ScrollingGraph {
   private readonly ctx: CanvasRenderingContext2D
   private readonly fontPx: number
   private readonly lineWidth: number
+  /** Where the limit line is drawn, in flashes per second. */
+  private limit = GRAPH_LIMIT_FLASHES_PER_SEC
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -51,6 +53,11 @@ export class ScrollingGraph {
     this.ctx = ctx
     this.fontPx = options.fontPx ?? 10
     this.lineWidth = options.lineWidth ?? 1.5
+  }
+
+  /** Move the limit line: the flash limit in force (3 unless raised for testing). */
+  setLimit(flashesPerSec: number): void {
+    this.limit = flashesPerSec
   }
 
   /** Add a sample at capture time tMs and drop the ones that scrolled off. */
@@ -105,7 +112,7 @@ export class ScrollingGraph {
     }
 
     // The limit: more than 3 flashes per second over a hazardous area.
-    const limitY = y(GRAPH_LIMIT_FLASHES_PER_SEC)
+    const limitY = y(this.limit)
     ctx.strokeStyle = COLORS.limit
     ctx.lineWidth = Math.max(1, this.lineWidth - 0.5)
     ctx.setLineDash([6, 4])
@@ -116,7 +123,7 @@ export class ScrollingGraph {
     ctx.setLineDash([])
     ctx.fillStyle = COLORS.limit
     ctx.textAlign = 'left'
-    ctx.fillText(`limit ${GRAPH_LIMIT_FLASHES_PER_SEC}/s`, pad.left + 4, limitY - font * 0.8)
+    ctx.fillText(`limit ${this.limit}/s`, pad.left + 4, limitY - font * 0.8)
 
     ctx.fillStyle = COLORS.label
     ctx.textBaseline = 'alphabetic'

@@ -191,6 +191,22 @@ A 60 Hz display can only show strobes at 30/n Hz: 30, 15, 10, 7.5, 6, 5 and so o
 
 These are predictions. Your slow-motion measurement replaces them. The table also shows why trigger choice beats raw latency: going from strict to early saves two flashes, while shaving 25 ms saves a quarter of one.
 
+#### The flash limit (a testing control)
+
+Added Sat Nov 14 at the user's request, to see how real content behaves at a looser limit. Everything above is written for the standard's limit of 3 flashes a second. The limit is now a detector option, `flashLimit`, and two numbers follow from it:
+
+- the fast-transition interval of Step 5: 1 / (2 × limit) s, rounded up to a whole millisecond, so 167 ms at 3, 100 ms at 5 and 72 ms at 7
+- the strict trigger's count: 2 × limit + 1, so 7 at 3, 11 at 5 and 15 at 7
+
+The early trigger still counts N fast transitions, and the area rule, the contrast rules and Step 5a are untouched. The dashboard has a "Flash limit (for testing)" slider from 3 to 10, and the graph's limit line follows it.
+
+**Above 3, CalmFrame no longer implements the WCAG threshold:** flashing between 3 and the limit is let through. So:
+
+- the default is 3, and the dashboard says in plain words when it is not
+- the limit is never restored from the settings file, so it is back at 3 at every launch, for the same reason protection always starts on
+- the viewer check keeps measuring what the viewer sees against the standard's 3
+- never demo, measure or quote results with the limit raised without saying so
+
 ### Step 7a: pre-arm (optional, off by default)
 
 The early trigger fires on the third fast reversal, so the first two reach the viewer at
@@ -296,6 +312,7 @@ ignores them behaves exactly as it did before pre-arm existed.
 - **Scrolling and dragging** make cells reverse, but one after another and both ways at once, so Step 5a does not count them. A window repainted three times in a row (a tab switch) still triggers early mode at N = 3.
 - **Capture rate** bounds what you can see. At 60 fps capture you resolve up to 30 Hz. Below 45 fps, show a warning in the dashboard.
 - **Frame gaps** over 250 ms reset all streaks, so a stall cannot fake a fast sequence.
+- **Exactly at the limit** can go either way. A strobe at exactly 3.0 Hz on evenly timed frames briefly holds a count of 7, not the 6 of Step 5, because the transition that is one second old lands a rounding error inside the window. So the strict trigger fires on it. It errs toward protecting, and real capture timestamps jitter by more than that anyway.
 - **Static spatial patterns** (stripes) are a separate hazard that IRIS detects and this spec does not. List it under future work.
 
 ## Mitigation math
@@ -500,6 +517,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Fast-transition interval | 167 ms |
 | Counting window | 1.0 s |
 | Trigger | Early, N = 3 |
+| Flash limit | 3 flashes a second, the standard's. A testing slider can raise it to 10 until the next launch |
 | Concurrency rule | One-way: a quarter of a window reversing the same way in one frame, with at most 0.25 as many reversing the other way (Step 5a) |
 | Area limit, window | 0.25 of a window one third of the grid each way |
 | Target residual ρ | 0.07 (0.08 until Phase 4) |
@@ -762,6 +780,7 @@ The dashboard replaces the debug window. It is plain TypeScript and canvas, one 
 - **Controls.**
   - The sensitivity slider has the positions N = 2, 3 (default), 4, then strict. Each shows the Step 7 prediction of flashes seen at 10 Hz and 75 ms (1.3, 1.8, 2.3, 3.8). It has no pre-arm position: the user decided at the start of this phase that pre-arm stays off.
   - "Ignore movement" is on by default. Unticked, it is the detector as first specified. The debug window's box drives the same setting.
+  - Added later the same day: the "Keep motion sharp (experimental)" tick box (trail #10, "Stretch: correct brightness per region") and the "Flash limit (for testing)" slider (Step 7, "The flash limit").
   - The on/off switch sits next to the status.
   - The tray icon has a different shape per status (a filled disc, a disc with a wave, a slashed ring), so it reads without colour. Its menu has the status, "Protection on", "Show dashboard" and "Quit CalmFrame".
   - Everything is a native control, so the page works from the keyboard: Tab, arrow keys, Space.

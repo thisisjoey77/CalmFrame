@@ -30,6 +30,7 @@ CalmFrame runs in the tray and opens its dashboard at the top right of the scree
 - **Flash events.** One line per event, such as `0:42, 8 Hz, 2.1 s, smoothed`, and a count of the events smoothed since start.
 - **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more than 3 flashes in a second). Each position shows how many flashes of a 10 Hz strobe the spec predicts get through first.
 - **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
+- **Flash limit (for testing)** is 3 flashes a second, the WCAG limit, and can be raised as far as 10 to see how content behaves at a looser limit. Above 3, CalmFrame lets through flashing that the WCAG rule counts as a hazard, and the dashboard says so. It goes back to 3 every time CalmFrame starts.
 - **Keep motion sharp (experimental)** (off by default) changes how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. It is for testing: a thin rim can still flicker where flashing content meets still content.
 - **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the dashboard's switch and the tray menu. Protection is always on when CalmFrame starts.
 - Settings are saved in `%APPDATA%\calmframe\settings.json`. Closing the dashboard keeps CalmFrame in the tray. Quit from the tray menu.

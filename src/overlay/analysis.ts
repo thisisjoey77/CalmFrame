@@ -60,7 +60,8 @@ import type { FrameImage, GridPass, GridReadback } from './gridPass'
 import type { SmoothPass } from './smoothPass'
 import { SampleRing } from './stats'
 
-/** The detector options the user's settings choose: trigger, N and the concurrency rule. */
+/** The detector options the user's settings choose: trigger, N, the concurrency rule and
+ *  the flash limit. */
 export type DetectorSettings = ReturnType<typeof detectorOptionsFor>
 
 export interface AnalysisSink {
@@ -84,8 +85,8 @@ function reasonFor(from: OverlayStateName, to: OverlayStateName): string {
 }
 
 export class LiveAnalysis {
-  /** The sensitivity slider and the Step 5a switch ("Ignore movement"; off is the detector
-   *  as it was before the rule). */
+  /** The sensitivity slider, the Step 5a switch ("Ignore movement"; off is the detector
+   *  as it was before the rule) and the flash limit (3 unless raised for testing). */
   private options: DetectorSettings
   // The GPU reads back RGBA, so the detector and the viewer check take four values per cell.
   private detector: Detector
@@ -262,8 +263,8 @@ export class LiveAnalysis {
   }
 
   /**
-   * Apply the user's detector settings: the sensitivity slider's trigger and N, and the
-   * concurrency rule (Step 5a). If they changed, the detector starts again with no
+   * Apply the user's detector settings: the sensitivity slider's trigger and N, the
+   * concurrency rule (Step 5a) and the flash limit. If they changed, the detector starts again with no
    * history, so a hazard in progress ends and has to be found again under the new
    * settings. The state machine carries on with its usual hold and fade, which outlasts
    * the time a running strobe needs to trigger again.
@@ -273,7 +274,8 @@ export class LiveAnalysis {
     if (
       options.trigger === o.trigger &&
       options.streakN === o.streakN &&
-      options.concurrency === o.concurrency
+      options.concurrency === o.concurrency &&
+      options.flashLimit === o.flashLimit
     ) {
       return
     }

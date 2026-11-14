@@ -568,7 +568,7 @@ function installIpc(): void {
     logSafely(
       'settings',
       () =>
-        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}, mitigation ${after.mitigation}`
+        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}, mitigation ${after.mitigation}, flash limit ${after.flashLimit}/s`
     )
     broadcastSettings(after)
   })

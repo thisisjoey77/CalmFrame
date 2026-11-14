@@ -6,13 +6,16 @@
 import {
   DASHBOARD_GRAPH_MIN_Y_MAX,
   DASHBOARD_GRAPH_WINDOW_MS,
+  DEFAULT_FLASH_LIMIT,
   EVENT_LOG_MAX,
+  FLASH_LIMIT_MAX,
+  FLASH_LIMIT_MIN,
   FPS_WINDOW_MS,
   LOW_FPS_WARNING,
   LOW_FPS_WARNING_HOLD_MS,
   SLIDER_EXAMPLE_HZ,
   STATUS_REFRESH_MS,
-  STRICT_TRIGGER_COUNT
+  strictTriggerCount
 } from '../shared/config'
 import { flashEventText } from '../shared/eventText'
 import type { CaptureStats, FlashEventMessage, StatusBeat } from '../shared/messages'
@@ -173,6 +176,27 @@ const slider = $<HTMLInputElement>('sensitivity')
 const sensitivityName = $('sensitivity-name')
 const sensitivityDesc = $('sensitivity-desc')
 const movement = $<HTMLInputElement>('ignore-movement')
+const flashLimit = $<HTMLInputElement>('flash-limit')
+const flashLimitName = $('flash-limit-name')
+const flashLimitDesc = $('flash-limit-desc')
+const graphTitle = $('graph-title')
+/** The flash limit in force, which the strict position's words and the prediction use. */
+let limitInForce = DEFAULT_FLASH_LIMIT
+
+flashLimit.min = String(FLASH_LIMIT_MIN)
+flashLimit.max = String(FLASH_LIMIT_MAX)
+
+/** The words for a flash limit. Above the standard's 3 they say plainly what is given up. */
+function describeFlashLimit(limit: number): void {
+  const standard = limit === DEFAULT_FLASH_LIMIT
+  const name = standard ? `${limit} a second (WCAG)` : `${limit} a second (testing)`
+  flashLimitName.textContent = name
+  flashLimit.setAttribute('aria-valuetext', name)
+  flashLimitDesc.textContent = standard
+    ? 'The WCAG limit: more than 3 flashes in a second is a hazard. Raise it only to test.'
+    : `Not the WCAG limit: flashing between 3 and ${limit} times a second is now let through. Back to 3 when CalmFrame restarts.`
+  flashLimitDesc.classList.toggle('raised', !standard)
+}
 const keepSharp = $<HTMLInputElement>('keep-sharp')
 const sharpDesc = $('sharp-desc')
 const SHARP_HINT =
@@ -196,7 +220,7 @@ function sensitivityText(s: Sensitivity): { name: string; what: string } {
   if (s.trigger === 'strict') {
     return {
       name: 'Strict',
-      what: `Only a clear violation: ${STRICT_TRIGGER_COUNT} fast changes in a second.`
+      what: `Only a clear violation: ${strictTriggerCount(limitInForce)} fast changes in a second.`
     }
   }
   const position = sensitivityPosition(s)
@@ -221,13 +245,22 @@ function sensitivityText(s: Sensitivity): { name: string; what: string } {
 
 function describeSensitivity(s: Sensitivity): void {
   const { name, what } = sensitivityText(s)
-  const seen = predictedFlashesSeen(s).toFixed(1)
+  const seen = predictedFlashesSeen(s, undefined, undefined, limitInForce).toFixed(1)
   sensitivityName.textContent = name
   sensitivityDesc.textContent = `${what} Predicted: about ${seen} flashes of a ${SLIDER_EXAMPLE_HZ} Hz strobe get through first.`
   slider.setAttribute('aria-valuetext', name)
 }
 
 function applySettings(s: Settings): void {
+  limitInForce = s.flashLimit
+  flashLimit.value = String(s.flashLimit)
+  describeFlashLimit(s.flashLimit)
+  graph.setLimit(s.flashLimit)
+  graphTitle.textContent =
+    s.flashLimit === DEFAULT_FLASH_LIMIT
+      ? `Flashes per second, limit ${s.flashLimit} (WCAG 2.3.1)`
+      : `Flashes per second, limit ${s.flashLimit} (testing; WCAG is ${DEFAULT_FLASH_LIMIT})`
+  if (!document.hidden) graph.draw()
   slider.value = String(sensitivityPosition(s.sensitivity))
   describeSensitivity(s.sensitivity)
   movement.checked = s.concurrency === 'one-way'
@@ -245,6 +278,11 @@ slider.addEventListener('change', () => {
 })
 movement.addEventListener('change', () => {
   api.updateSettings({ concurrency: movement.checked ? 'one-way' : 'off' })
+})
+// As for the sensitivity: words while dragging, the setting on release.
+flashLimit.addEventListener('input', () => describeFlashLimit(Number(flashLimit.value)))
+flashLimit.addEventListener('change', () => {
+  api.updateSettings({ flashLimit: Number(flashLimit.value) })
 })
 keepSharp.addEventListener('change', () => {
   sharpChangedAt = performance.now()

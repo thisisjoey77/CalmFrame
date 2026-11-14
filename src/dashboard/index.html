@@ -224,15 +224,20 @@
       .title-row label {
         font-weight: 600;
       }
-      #sensitivity-name {
+      #sensitivity-name,
+      #flash-limit-name {
         font-weight: 600;
         color: var(--muted);
         text-align: right;
       }
-      #sensitivity {
+      #sensitivity,
+      #flash-limit {
         width: 100%;
         margin: 8px 0 2px;
         accent-color: var(--smoothing);
+      }
+      #flash-limit-desc.raised {
+        color: var(--warn-text);
       }
       .scale {
         display: flex;
@@ -415,6 +420,23 @@
             Scrolling and dragging windows don't start smoothing. Untick to count every change, as
             the detector first did.
           </p>
+        </div>
+        <div>
+          <div class="title-row">
+            <label for="flash-limit">Flash limit (for testing)</label>
+            <span id="flash-limit-name"></span>
+          </div>
+          <input
+            id="flash-limit"
+            type="range"
+            min="3"
+            max="10"
+            step="1"
+            value="3"
+            aria-describedby="flash-limit-desc"
+          />
+          <div class="scale" aria-hidden="true"><span>3 (WCAG)</span><span>10</span></div>
+          <p class="hint" id="flash-limit-desc"></p>
         </div>
         <div>
           <label class="check">
