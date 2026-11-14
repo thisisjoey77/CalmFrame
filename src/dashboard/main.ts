@@ -8,7 +8,8 @@ import {
   DEBUG_CAPTURE_SIZES,
   DEBUG_HAZARD_LOG_MAX,
   LUMINANCE_THRESHOLD,
-  PHASE0_MIN_FPS
+  PHASE0_MIN_FPS,
+  STATS_EVERY_N_FRAMES
 } from '../shared/config'
 import type {
   CaptureStats,
@@ -119,6 +120,10 @@ DEBUG_CAPTURE_SIZES.forEach((size) => {
   sizes.append(label)
 })
 
+$<HTMLInputElement>('concurrency-on').addEventListener('change', (e) => {
+  api.setConcurrencyRule((e.target as HTMLInputElement).checked ? 'one-way' : 'off')
+})
+
 $<HTMLInputElement>('on-top').addEventListener('change', (e) => {
   api.setDebugOnTop((e.target as HTMLInputElement).checked)
 })
@@ -179,6 +184,10 @@ function timingText(t: Timing): string {
   return `${ms(t.median)} median, ${ms(t.p95)} p95`
 }
 
+/** Stats messages kept for the "movement set aside" figure: about a second's worth. */
+const IGNORED_MESSAGES = Math.round(CAPTURE_FPS / STATS_EVERY_N_FRAMES)
+const ignoredRecent: number[] = []
+
 api.onDetectionStats((s: DetectionStats) => {
   graph.push(s.tMs, s.graphValue, s.hazard)
   graph.draw()
@@ -191,6 +200,15 @@ api.onDetectionStats((s: DetectionStats) => {
   setCell('d-freq', s.frequencyHz > 0 ? `${s.frequencyHz.toFixed(1)} Hz` : '-')
   setCell('d-size', s.flashSize > 0 ? `ΔL ${s.flashSize.toFixed(2)}` : '-')
   setCell('d-area', s.areaFraction.toFixed(2))
+  ignoredRecent.push(s.ignoredReversals)
+  if (ignoredRecent.length > IGNORED_MESSAGES) ignoredRecent.shift()
+  setCell(
+    'd-ignored',
+    s.concurrency === 'one-way'
+      ? `${ignoredRecent.reduce((a, b) => a + b, 0)} cell changes in the last second or so`
+      : 'filter off: every change counts',
+    s.concurrency === 'one-way' ? 'ok' : 'warn'
+  )
 
   const overBudget = s.cost.p95 !== null && s.cost.p95 >= ANALYSIS_BUDGET_MS
   setCell(

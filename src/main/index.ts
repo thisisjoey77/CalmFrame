@@ -22,7 +22,8 @@ import {
   FPS_SWEEP_WARMUP_MS,
   KILL_SWITCH_ACCELERATOR,
   OVERLAY_BOTTOM_INSET,
-  WATCHDOG_MS
+  WATCHDOG_MS,
+  type ConcurrencyRule
 } from '../shared/config'
 import {
   IPC,
@@ -378,7 +379,7 @@ function installIpc(): void {
       () =>
         `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
         `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
-        `hot ${stats.hotCells} | state ${stats.state}, alpha ${fmt(sm.alpha, 3)}, d ${fmt(sm.dim, 2)}, ` +
+        `hot ${stats.hotCells}, rule ${stats.concurrency} (set aside ${stats.ignoredReversals}) | state ${stats.state}, alpha ${fmt(sm.alpha, 3)}, d ${fmt(sm.dim, 2)}, ` +
         `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''} | ` +
         `seen: ${v.checking ? `graph ${fmt(v.graphValue, 1)}, residual ${fmt(v.residual, 3)}` : 'overlay not drawn'} | ` +
         `cost median ${fmt(stats.cost.median, 2)} ms, p95 ${fmt(stats.cost.p95, 2)} ms ` +
@@ -423,6 +424,14 @@ function installIpc(): void {
           `[self-check]   cycle ${i + 1}: red ratio off ${fmt(c.hidden.redRatio, 3)} -> on ${fmt(c.shown.redRatio, 3)}, black share on ${fmt(c.shown.blackFraction, 2)}`
       )
     })
+  })
+
+  // The fallback switch for the concurrency rule (Step 5a): 'off' is the detector as it
+  // was before the rule.
+  ipcMain.on(IPC.concurrencyRule, (_event, rule: ConcurrencyRule) => {
+    if (rule !== 'one-way' && rule !== 'off') return
+    console.log(`[detector] concurrency rule: ${rule}`)
+    overlayWin?.webContents.send(IPC.concurrencyRule, rule)
   })
 
   // Stacking test for the open question in CLAUDE.md: debug window above the overlay,

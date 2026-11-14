@@ -132,6 +132,10 @@
         <td id="d-area">waiting</td>
       </tr>
       <tr>
+        <td>Movement set aside</td>
+        <td id="d-ignored">waiting</td>
+      </tr>
+      <tr>
         <td>Smoothing</td>
         <td id="d-smoothing">waiting</td>
       </tr>
@@ -285,6 +289,15 @@
     <span id="selfcheck-verdict">not run yet</span>
     <div id="selfcheck-detail"></div>
     <p class="hint">Pause any video first. Takes about 3 seconds; the tint blinks off and on.</p>
+
+    <h2>Movement filter</h2>
+    <label
+      ><input type="checkbox" id="concurrency-on" checked /> Ignore movement: a change only counts
+      when a whole area changes the same way in the same frame</label
+    >
+    <p class="hint">
+      Untick to fall back to the old detector, which counts every change (scrolling triggers it).
+    </p>
 
     <h2>Stacking test</h2>
     <label

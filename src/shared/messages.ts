@@ -4,6 +4,7 @@
  */
 
 import type { HazardType } from '../core/detector'
+import type { ConcurrencyRule } from './config'
 import type { OverlayStateName } from '../core/stateMachine'
 
 export const IPC = {
@@ -38,7 +39,9 @@ export const IPC = {
   /** main -> overlay: protection switched on or off (kill switch, watchdog, failure). */
   protection: 'protection',
   /** main -> overlay: debug only, block the renderer's main thread for this many ms. */
-  debugFreeze: 'debug-freeze'
+  debugFreeze: 'debug-freeze',
+  /** debug -> main -> overlay: switch the detector's concurrency rule (Step 5a). */
+  concurrencyRule: 'concurrency-rule'
 } as const
 
 export interface CaptureSize {
@@ -158,6 +161,10 @@ export interface DetectionStats {
   flashSize: number
   areaFraction: number
   hotCells: number
+  /** The concurrency rule in force (Step 5a), and the reversals it set aside since the
+   *  last message: cells that reversed without it counting as a transition. */
+  concurrency: ConcurrencyRule
+  ignoredReversals: number
   /** Overlay state machine. */
   state: OverlayStateName
   /** What the overlay is doing now (state machine output), and whether it is drawn. */
@@ -254,10 +261,12 @@ export interface CalmFrameApi {
   sendStateChange(change: StateChange): void
   onProtection(callback: (enabled: boolean, reason: string) => void): void
   onDebugFreeze(callback: (ms: number) => void): void
+  onConcurrencyRule(callback: (rule: ConcurrencyRule) => void): void
   // debug window
   runSelfCheck(): void
   restartCapture(size: CaptureSize): void
   setDebugOnTop(onTop: boolean): void
+  setConcurrencyRule(rule: ConcurrencyRule): void
   onCaptureStats(callback: (stats: CaptureStats) => void): void
   onSelfCheckResult(callback: (result: SelfCheckResult) => void): void
   onOverlayState(callback: (state: OverlayState) => void): void

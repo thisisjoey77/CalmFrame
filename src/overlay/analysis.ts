@@ -24,7 +24,14 @@
  * changes leave this module. Frames never cross IPC.
  */
 
-import { ALPHA_WARM, ANALYSIS_STATS_WINDOW, HOLD_MS, RED_DESATURATION } from '../shared/config'
+import {
+  ALPHA_WARM,
+  ANALYSIS_STATS_WINDOW,
+  DEFAULT_CONCURRENCY_RULE,
+  HOLD_MS,
+  RED_DESATURATION,
+  type ConcurrencyRule
+} from '../shared/config'
 import type { DetectionStats, HazardEvent, StateChange, Timing } from '../shared/messages'
 import { Detector, type DetectorResult, type HazardType } from '../core/detector'
 import { OverlayStateMachine, type OverlayStateName, type StateOutput } from '../core/stateMachine'
@@ -53,8 +60,10 @@ function reasonFor(from: OverlayStateName, to: OverlayStateName): string {
 }
 
 export class LiveAnalysis {
+  /** Step 5a. The debug window can switch it off, which is the detector as it was before. */
+  private concurrency: ConcurrencyRule = DEFAULT_CONCURRENCY_RULE
   // The GPU reads back RGBA, so the detector and the viewer check take four values per cell.
-  private detector = new Detector({ inputChannels: 4 })
+  private detector = this.makeDetector()
   private machine = new OverlayStateMachine()
   private readonly viewer = new ViewerCheck(4)
   private captureFps = 0
@@ -125,6 +134,7 @@ export class LiveAnalysis {
   // Since the last stats message.
   private periodGraphMax = 0
   private periodHazard = false
+  private periodIgnored = 0
   private periodViewerGraph = 0
 
   // Viewer check, now and over the latest drawn episode.
@@ -212,6 +222,21 @@ export class LiveAnalysis {
     })
   }
 
+  /**
+   * Switch the concurrency rule (Step 5a). The detector starts again with no history, so a
+   * hazard in progress ends and has to be found again under the new rule. The state
+   * machine carries on, with its usual hold and fade.
+   */
+  setConcurrency(rule: ConcurrencyRule): void {
+    if (rule === this.concurrency) return
+    this.concurrency = rule
+    this.detector = this.makeDetector()
+  }
+
+  private makeDetector(): Detector {
+    return new Detector({ inputChannels: 4, concurrency: this.concurrency })
+  }
+
   /** Stop for good (fail open): drop GPU work in flight, stop polling and leave the
    *  canvas transparent. */
   stop(): void {
@@ -236,6 +261,8 @@ export class LiveAnalysis {
       flashSize: d?.flashSize ?? 0,
       areaFraction: d?.areaFraction ?? 0,
       hotCells: d?.hotCells ?? 0,
+      concurrency: this.concurrency,
+      ignoredReversals: this.periodIgnored,
       state: this.machine.state,
       smoothing: {
         alpha: this.alpha,
@@ -278,6 +305,7 @@ export class LiveAnalysis {
     }
     this.periodGraphMax = 0
     this.periodHazard = false
+    this.periodIgnored = 0
     this.periodViewerGraph = 0
     return out
   }
@@ -296,7 +324,7 @@ export class LiveAnalysis {
       this.drawn = false
     }
     if (this.hazardOn) this.endHazard(this.lastT)
-    this.detector = new Detector({ inputChannels: 4 })
+    this.detector = this.makeDetector()
     this.machine = new OverlayStateMachine()
     if (!this.enabled) this.machine.disable()
     this.viewer.reset()
@@ -312,6 +340,7 @@ export class LiveAnalysis {
     this.frames = 0
     this.periodGraphMax = 0
     this.periodHazard = false
+    this.periodIgnored = 0
     this.periodViewerGraph = 0
   }
 
@@ -363,6 +392,7 @@ export class LiveAnalysis {
     this.lastT = info.tMs
     if (d.graphValue > this.periodGraphMax) this.periodGraphMax = d.graphValue
     if (d.hazard) this.periodHazard = true
+    this.periodIgnored += d.ignoredReversals
     this.trackHazard(d, info.tMs)
   }
 

@@ -228,6 +228,7 @@ async function start(): Promise<void> {
   startHeartbeat()
   api.onProtection((enabled, reason) => analysis?.setEnabled(enabled, reason))
   api.onDebugFreeze(freeze)
+  api.onConcurrencyRule((rule) => analysis?.setConcurrency(rule))
   try {
     startAnalysis()
   } catch (error) {

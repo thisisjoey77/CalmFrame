@@ -25,9 +25,13 @@ const api: CalmFrameApi = {
   onDebugFreeze: (callback) => {
     ipcRenderer.on(IPC.debugFreeze, (_event, ms) => callback(ms))
   },
+  onConcurrencyRule: (callback) => {
+    ipcRenderer.on(IPC.concurrencyRule, (_event, rule) => callback(rule))
+  },
   runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
   restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
   setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),
+  setConcurrencyRule: (rule) => ipcRenderer.send(IPC.concurrencyRule, rule),
   onCaptureStats: (callback) => {
     ipcRenderer.on(IPC.captureStats, (_event, stats) => callback(stats))
   },
