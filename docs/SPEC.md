@@ -742,6 +742,8 @@ Decisions and deviations:
 
 The IRIS comparison ran overnight, unattended. The latency log came from the morning slow-motion session. The slow-motion counts are still to come.
 
+**Merged with one box open (Sat Nov 14, about 8 AM).** At the user's request, Phase 6 merged to `main` before the slow-motion counts, so the native capture could merge after it. The counts are a measurement, not code: the user will film them later, preferably with the native capture, since that is what the demo runs. The box stays unticked until then.
+
 - **Latency from the app's log** (`measurements/latency.md`). The run lasted 201 s in demo setup on default settings, with five low-contrast bursts at 5, 10 and 15 Hz. All five were smoothed, with no busy skips.
   - Captured → decision: 13.8 ms median, 21.9 ms p95.
   - Decision → overlay drawn: 4.8 ms median, 5.9 ms p95.
