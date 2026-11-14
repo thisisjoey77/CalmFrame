@@ -548,7 +548,7 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   src/core/            luminance, tracker, area, detector, filter math, brightness correction, state machine, tests
   src/shared/          message types, config defaults
   tools/strobe/        strobe test page
-  tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all)
+  tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all), offline render (npm run render)
   measurements/        slow-motion results, comparison tables
 ```
 
@@ -971,6 +971,24 @@ The demo's job is to make an invisible product visible: the screen stays calm wh
 ### One gotcha to plan around
 
 Screen recorders cannot see the overlay, because it is excluded from capture by design. A screen recording of CalmFrame working shows the raw strobe. For the video, film the laptop with a phone. The dashboard is excluded from capture too (so the detector does not analyse it and the protected preview does not capture itself), which means a screen recorder cannot see the dashboard or its protected-preview pane either. Footage of both comes from the phone, unless Phase 5 adds a switch that lets the dashboard be recorded.
+
+A switch that made the overlay visible to recorders would make it visible to the detector too. It would then see its own calm picture, switch off, see the strobe and switch on again, every couple of seconds. So the demo's clean comparison is not a recording at all:
+
+#### The offline render (Sat Nov 14)
+
+`npm run render -- <video>` (`tools/validate/render.ts`) reads a video file, a normal screen recording for example, and writes a 1920×1080 video of what CalmFrame's viewer would see, next to the original.
+
+- **The same code as the app.** Every frame goes through the grid average, the detector and the overlay state machine from `src/core`. The picture is then calmed per pixel on the CPU with the arithmetic the GPU passes are checked against at startup: the smoothing filter, or the brightness correction.
+- **The app's settings, as options, with the app's defaults:** `--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`. The settings used are written into the picture.
+- **Layouts:** `big-small` (the default: the protected picture at 1280×720 and the original at 640×360), `equal` (two at 960×540) and `protected-only` (the protected picture alone, full frame, no text, for editing). The original is small by default on purpose: it is unprotected flashing in a video other people will watch, and at 11% of the frame it stays under the quarter of the frame IRIS allows.
+- **It does not flatter the app.** As in the app, a frame is filtered with the strength decided on the frame before. The overlay's picture then reaches the viewer `--delay-frames` late (default 1, the measured capture-to-drawn time at 60 fps), over the screen as it is by then. So the first flash or two of each burst get through, as they do live.
+- **Also:** `--layout`, `--fps` (default: the source's, at most 60), `--start` and `--duration` in seconds, `--out`. The source is resampled to a constant frame rate, since screen recorders rarely keep one, and scaled to fit with black bars.
+- **A report** is printed and saved next to the video: how long the overlay was on, and the seconds flagged in the original, in the protected picture and in the finished video as a whole. It measures against the standard (strict trigger, limit 3) as well as against the settings asked for, and says so when the flash limit was raised.
+- **It runs anywhere with Node and ffmpeg,** the Coder workspace included, and needs no screen. About 14 frames a second at 1280×720 on the demo laptop, so 30 s of 60 fps footage takes about two minutes.
+
+What it is not, and the footage must say: **a recording of the live overlay.** It has no capture, no GPU, no compositor and no display. The picture carries the line "Rendered offline with CalmFrame's own detection and filter code. Not a recording of the live overlay." Keep that line in the video. The phone shot of the real app is still what shows it is live.
+
+First run, on 10 s of the anime battle clip around its hardest moment (default settings): the overlay was on for 6.4 s, in 2 stretches. At the standard, the original was flagged in 3 of the 10 seconds and the protected picture in none, with the smoothing filter and with the brightness correction alike. To the eye the two look very different on this clip: the smoothing filter gives a soft blend of the recent frames, and the brightness correction gives the current frame with crisp outlines but washed-out, with pale halos along strong edges. Look at both before choosing which one the demo shows.
 
 ### Table demo, about 90 seconds
 

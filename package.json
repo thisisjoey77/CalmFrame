@@ -18,6 +18,7 @@
     "validate:clips": "npm run validate:build && node tools/validate/dist/tools/validate/make-clips.js",
     "validate": "npm run validate:build && node tools/validate/dist/tools/validate/validate.js",
     "validate:all": "npm run validate:build && node tools/validate/dist/tools/validate/all.js",
+    "render": "npm run validate:build && node tools/validate/dist/tools/validate/render.js",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

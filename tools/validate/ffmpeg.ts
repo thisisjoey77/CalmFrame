@@ -224,3 +224,168 @@ export function encodeClip(
     pump()
   })
 }
+
+/** Frame rate of the first video stream as ffmpeg reports it, or null if it does not. */
+export function probeFps(ffmpeg: string, file: string): number | null {
+  const r = spawnSync(ffmpeg, ['-hide_banner', '-i', file], { encoding: 'utf8' })
+  const line = (r.stderr ?? '').split(/\r?\n/).find((l) => /Stream #.*Video:/.test(l))
+  const fps = line && /([\d.]+) fps/.exec(line)
+  const value = fps ? Number(fps[1]) : NaN
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
+export interface ReadOptions {
+  /** Every frame is scaled to fit this size, keeping its shape, with black bars to fill. */
+  width: number
+  height: number
+  /** Frames are resampled to this constant rate, so a recording with an uneven frame rate
+   *  (most screen recorders') comes out evenly timed. */
+  fps: number
+  /** Start this many seconds into the file. */
+  startS?: number
+  /** Stop after this many seconds. */
+  durationS?: number
+}
+
+/**
+ * Decode the first video stream to RGBA8 frames of a fixed size at a constant frame rate,
+ * one at a time, for the offline render. The buffer is reused: use it before asking for the
+ * next frame.
+ */
+export async function* readFrames(
+  ffmpeg: string,
+  file: string,
+  options: ReadOptions
+): AsyncGenerator<Uint8Array, void, void> {
+  const { width, height, fps } = options
+  const args = ['-hide_banner', '-loglevel', 'error']
+  if (options.startS !== undefined) args.push('-ss', String(options.startS))
+  args.push('-i', file)
+  if (options.durationS !== undefined) args.push('-t', String(options.durationS))
+  args.push(
+    '-map',
+    '0:v:0',
+    '-vf',
+    `fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=area,` +
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+    '-f',
+    'rawvideo',
+    '-pix_fmt',
+    'rgba',
+    '-'
+  )
+  const proc = spawn(ffmpeg, args)
+  let stderr = ''
+  proc.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+  const closed = new Promise<number | null>((resolve, reject) => {
+    proc.on('error', reject)
+    proc.on('close', resolve)
+  })
+  const frameBytes = width * height * 4
+  const frame = new Uint8Array(frameBytes)
+  let filled = 0
+  let finished = false
+  try {
+    for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
+      let offset = 0
+      while (offset < chunk.length) {
+        const n = Math.min(frameBytes - filled, chunk.length - offset)
+        frame.set(chunk.subarray(offset, offset + n), filled)
+        filled += n
+        offset += n
+        if (filled === frameBytes) {
+          filled = 0
+          yield frame
+        }
+      }
+    }
+    finished = true
+  } finally {
+    // The caller stopped early, or something threw: do not leave ffmpeg running.
+    if (!finished) proc.kill()
+  }
+  const code = await closed
+  if (code !== 0) throw new Error(`ffmpeg could not read ${file}: ${stderr.slice(-500)}`)
+}
+
+/**
+ * Encode RGBA8 frames, handed over one at a time, to an H.264 MP4 marked as BT.709, the
+ * colour standard players assume for HD video.
+ */
+export class FrameWriter {
+  private readonly proc: ReturnType<typeof spawn>
+  private readonly done: Promise<void>
+  private stderr = ''
+
+  constructor(
+    ffmpeg: string,
+    out: string,
+    width: number,
+    height: number,
+    fps: number,
+    crf: number
+  ) {
+    this.proc = spawn(ffmpeg, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      '-s',
+      `${width}x${height}`,
+      '-r',
+      String(fps),
+      '-i',
+      '-',
+      '-vf',
+      'scale=out_color_matrix=bt709:out_range=tv',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      String(crf),
+      '-pix_fmt',
+      'yuv420p',
+      '-colorspace',
+      'bt709',
+      '-color_primaries',
+      'bt709',
+      '-color_trc',
+      'bt709',
+      '-movflags',
+      '+faststart',
+      out
+    ])
+    this.proc.stderr?.on('data', (d: Buffer) => (this.stderr += d.toString()))
+    this.done = new Promise<void>((resolve, reject) => {
+      this.proc.on('error', reject)
+      this.proc.on('close', (code) => {
+        if (code !== 0)
+          reject(new Error(`ffmpeg could not write ${out}: ${this.stderr.slice(-500)}`))
+        else resolve()
+      })
+    })
+    // A failed encoder closes its input; the real error is reported by close().
+    this.proc.stdin?.on('error', () => undefined)
+  }
+
+  /** Hand over one frame. Resolves when ffmpeg is ready for the next. The bytes are copied. */
+  write(rgba: Uint8Array): Promise<void> {
+    const stdin = this.proc.stdin
+    if (!stdin) return Promise.reject(new Error('the encoder has no input'))
+    return new Promise((resolve) => {
+      if (stdin.write(Buffer.from(rgba))) resolve()
+      else stdin.once('drain', () => resolve())
+    })
+  }
+
+  /** Finish the file. */
+  close(): Promise<void> {
+    this.proc.stdin?.end()
+    return this.done
+  }
+}

@@ -457,3 +457,26 @@ export const NATIVE_CAPTURE_ENV = 'CALMFRAME_NATIVE_CAPTURE'
  *  smoothing filter keep sampling at a steady rate, as with Chromium's capture. Just over
  *  one 60 Hz frame (16.7 ms), so a screen that changes every frame gets no repeats. */
 export const NATIVE_CAPTURE_REPEAT_MS = 20
+
+// ---------------------------------------------------------------------------
+// Demo footage: the offline render (tools/validate/render.ts)
+// ---------------------------------------------------------------------------
+
+/** Size of the video the offline render writes. Screen recorders cannot see the overlay, so
+ *  the demo's clean comparison is rendered from a video file ("One gotcha to plan around"). */
+export const RENDER_WIDTH = 1920
+export const RENDER_HEIGHT = 1080
+/** The render shows the overlay's picture this many frames late, as the live app does: a
+ *  frame is captured, analysed and drawn before it can reach the screen. One frame is the
+ *  measured capture-to-drawn time at 60 fps (14 ms median, "Native capture"), and leaves
+ *  out the compositor and the display, so it does not flatter the app. */
+export const RENDER_DEFAULT_DELAY_FRAMES = 1
+export const RENDER_MAX_DELAY_FRAMES = 6
+/** The render keeps the source's frame rate up to this, the app's capture rate. */
+export const RENDER_MAX_FPS = CAPTURE_FPS
+/** Frame rate used when the source's cannot be read. */
+export const RENDER_FALLBACK_FPS = 30
+/** x264 quality of the rendered video: visually lossless for screen content. */
+export const RENDER_CRF = 16
+/** Time span of the render's flashes-per-second graph. */
+export const RENDER_GRAPH_WINDOW_MS = 10000

@@ -61,6 +61,21 @@ npm run validate:all     # makes the 11 test clips, runs IRIS and CalmFrame, wri
 
 `imageio-ffmpeg` brings its own ffmpeg, so nothing needs installing system-wide. Set `CALMFRAME_FFMPEG` to use another ffmpeg, or `CALMFRAME_IRIS` for another `iris` command. To check one file: `npm run validate -- <video> [--area wcag|iris] [--trigger early|strict] [--extended]`. That writes one CSV row per second to `measurements/validate/`.
 
+### Demo footage: the offline render
+
+Screen recorders can't see the overlay, so a recording of CalmFrame at work shows the raw screen. For a clean comparison, `npm run render` works from a video file instead. It runs every frame through the same detection and filter code as the app and writes a 1920×1080 video with the protected picture next to the original:
+
+```sh
+npm run render -- myclip.mp4                              # the app's default settings
+npm run render -- myclip.mp4 --keep-motion-sharp on       # the experimental method
+npm run render -- myclip.mp4 --sensitivity strict --flash-limit 5 --ignore-movement off
+npm run render -- myclip.mp4 --layout equal --start 30 --duration 20 --out demo.mp4
+```
+
+The options are the app's settings (`--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`), and the ones used are written into the picture. `--layout` is `big-small` (default), `equal` or `protected-only`. It needs the same ffmpeg as the validator above, and prints a short report of how many seconds were flagged before and after.
+
+This is a simulation, not a recording of the live overlay, and the picture says so. As in the app, the first flash or two of each burst still gets through.
+
 ## Limitations
 
 _TODO. Known so far:_
