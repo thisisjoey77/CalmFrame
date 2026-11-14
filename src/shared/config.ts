@@ -186,7 +186,7 @@ export const LOW_FPS_WARNING = 45
 /** Send stats and the grid thumbnail to the dashboard every N frames. "The per-frame loop". */
 export const STATS_EVERY_N_FRAMES = 3
 
-/** Raw-input thumbnail size cap, under the area limit at 1080p. Phase 5. */
+/** Raw-input thumbnail size cap in device pixels, under the area limit at 1080p. Phase 5. */
 export const THUMBNAIL_MAX_WIDTH = 240
 export const THUMBNAIL_MAX_HEIGHT = 135
 
@@ -254,6 +254,69 @@ export const SMOOTH_SELF_TEST_OPACITY = 0.5
  *  of each cell over the last COUNT_WINDOW_MS, kept as this many blocks, so the window
  *  slides in steps of COUNT_WINDOW_MS / RESIDUAL_BLOCKS. */
 export const RESIDUAL_BLOCKS = 4
+
+// ---------------------------------------------------------------------------
+// Phase 5: dashboard and controls
+// ---------------------------------------------------------------------------
+
+/** The status reads "Protection off" when the overlay has had no captured frame for this
+ *  long. Chromium captures on a cadence and delivers a frame even when nothing on screen
+ *  changed (Phase 5 measurement: up to 19 of 45 frames a second were identical to the one
+ *  before, and the longest gap between frames was 49 ms), so a still screen never looks
+ *  stalled. Four times the frame-gap streak reset. */
+export const FRAME_STALE_MS = 1000
+/** The dashboard and the tray re-derive the status this often, so heartbeats that stop
+ *  arriving turn the status off within WATCHDOG_MS plus this. */
+export const STATUS_REFRESH_MS = HEARTBEAT_MS
+
+/** The sensitivity slider shows the spec's Step 7 prediction of flashes seen before
+ *  smoothing starts, F = (N - 1) / 2 + f L, for this strobe and this pipeline latency.
+ *  A prediction until the Phase 6 slow-motion measurement replaces it. */
+export const SLIDER_EXAMPLE_HZ = 10
+export const SLIDER_EXAMPLE_LATENCY_MS = 75
+
+/** The thumbnails are also no wider (and no taller) than this share of the screen, in
+ *  device pixels: 240 of 1920. The WCAG window is AREA_WINDOW_FRACTION of the screen each
+ *  way and the area limit is a quarter of it, so anything under sqrt(AREA_LIMIT) x
+ *  AREA_WINDOW_FRACTION = 1/6 each way stays under the limit, on any screen. */
+export const THUMBNAIL_MAX_SCREEN_FRACTION = 1 / 8
+/** Entries in the linear-to-sRGB table that encodes the thumbnails. 4096 keeps every
+ *  value within one 8-bit code of the exact formula. */
+export const THUMBNAIL_LUT_SIZE = 4096
+
+/** Flash events (the dashboard's log and counter): hazards closer together than this are
+ *  one event. It is how long the overlay stays up after the last hazard frame (the hold
+ *  plus the fade), so with protection on, one event is one smoothing episode. */
+export const FLASH_EVENT_MERGE_MS = HOLD_MS + FADE_MS
+/** Per-frame frequency estimates kept for an event. Its frequency is their median, because
+ *  the estimate is inflated at the edges of a burst (Phase 3 results). */
+export const FLASH_EVENT_FREQUENCY_SAMPLES = 600
+/** Event log lines kept in the dashboard. */
+export const EVENT_LOG_MAX = 200
+
+/** The low capture-rate warning stays up this long after the last reading under
+ *  LOW_FPS_WARNING, so a rate hovering around the line does not make it come and go. */
+export const LOW_FPS_WARNING_HOLD_MS = 5000
+
+/** Dashboard window size in DIP, its smallest size, and its distance from the edges of the
+ *  work area when placed for the first time (top right). */
+export const DASHBOARD_WIDTH = 460
+export const DASHBOARD_HEIGHT = 820
+export const DASHBOARD_MIN_WIDTH = 380
+export const DASHBOARD_MIN_HEIGHT = 420
+export const DASHBOARD_MARGIN = 16
+/** Dashboard graph: time span shown, and the smallest top of its y axis. */
+export const DASHBOARD_GRAPH_WINDOW_MS = 30000
+export const DASHBOARD_GRAPH_MIN_Y_MAX = 12
+
+/** Settings file, in the app's userData folder, and how long after a change it is written
+ *  (a slider dragged across its range writes once). */
+export const SETTINGS_FILE_NAME = 'settings.json'
+export const SETTINGS_SAVE_DELAY_MS = 500
+
+/** Tray icon: size in pixels at scale factor 1, and the scale factors it is drawn for. */
+export const TRAY_ICON_BASE_SIZE = 16
+export const TRAY_ICON_SCALES: readonly number[] = [1, 1.25, 1.5, 2]
 
 // ---------------------------------------------------------------------------
 // Debug tooling: overlay watchdog test

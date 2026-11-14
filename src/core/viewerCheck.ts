@@ -131,6 +131,13 @@ export class ViewerCheck {
     return r
   }
 
+  /** What the viewer saw on the latest frame, linear R, G, B per cell. Only meaningful
+   *  while the latest result says checking (the overlay was drawn). The dashboard's
+   *  protected preview (Phase 5). Overwritten by the next step. */
+  get seenGrid(): Float32Array {
+    return this.seen
+  }
+
   /** Forget everything, e.g. when the capture restarts. */
   reset(): void {
     this.filter = new ReferenceFilter(CELLS)

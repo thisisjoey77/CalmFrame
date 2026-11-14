@@ -75,6 +75,19 @@ describe('viewer check: the detector on what the viewer sees (Phase 4)', () => {
     )
   })
 
+  it('exposes what the viewer saw, for the protected preview', () => {
+    const check = new ViewerCheck(3)
+    const mask = new Uint8Array(GRID_CELLS)
+    const grid = new Float32Array(GRID_CELLS * 3).fill(0.6)
+    // Alpha 1 copies the frame into S, so the smoothed copy is d * X.
+    check.step(grid, 0, { alpha: 1, dim: 0.5, opacity: 1, red: false }, mask)
+    expect(check.seenGrid[0]).toBeCloseTo(0.3, 6)
+    expect(check.seenGrid[GRID_CELLS * 3 - 1]).toBeCloseTo(0.3, 6)
+    // Half opacity blends the copy over the raw screen: 0.5 * 0.3 + 0.5 * 0.6.
+    check.step(grid, 20, { alpha: 1, dim: 0.5, opacity: 0.5, red: false }, mask)
+    expect(check.seenGrid[0]).toBeCloseTo(0.45, 6)
+  })
+
   it('reads RGBA grids as the GPU returns them', () => {
     const detector = new Detector()
     const rgbCheck = new ViewerCheck(3)
