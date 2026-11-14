@@ -36,6 +36,7 @@ Before every commit, `npm run typecheck && npm run lint && npm test` must pass.
 - docs/SPEC.md is the source of truth. If the code must deviate, say so and update the spec in the same commit.
 - src/core is pure TypeScript with no Electron, DOM or Node imports. Everything in it has unit tests.
 - All per-frame work stays in the overlay renderer. Never send frames over IPC.
+- Never assume the capture size. Read it from each frame (`video.videoWidth/videoHeight`) and size GPU textures from it, reallocating if it changes. The 960×540 cap is a Phase 0 tuning choice we expect to raise later (faster hardware, auto-tuning, or a native capture module).
 - Timing logic uses capture timestamps, never frame counts.
 - Fail open: on any error, hide the overlay and report "Protection off".
 - Safety: never auto-play a strobe. Test content starts paused, low contrast and small, with an auto-stop.
