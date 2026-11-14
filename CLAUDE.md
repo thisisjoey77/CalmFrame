@@ -13,6 +13,7 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 | Windows 11 (demo machine) | src/main, src/preload, src/overlay, src/dashboard, the tray, all live testing | The only place the app runs. Overlay, capture exclusion, GPU passes and anything Electron does at runtime are verified here and nowhere else. |
 | Mac | src/core and its tests, tools/strobe, tools/validate, measurements | Pure TypeScript, Vitest, a static HTML page and the validator CLI. Never report an overlay, capture or Electron feature as working from a Mac run. Hand on-screen checks to the Windows laptop with exact steps. |
 
+- **From Phase 4 on (Fri Nov 13, 11:30 PM), the Windows laptop does every remaining phase**, including `src/core`, `tools/strobe`, `tools/validate` and measurements. The Mac column above still says which code is pure (no Electron), and that code is still what runs in the Coder workspace. Because no one else works in Coder, its evidence now comes from this laptop: run the suite there after each push, and run the Phase 6 validator there too (see "Coder" below).
 - One branch per phase (e.g. `phase0-overlay`, `phase1-core`). Merge to `main` when that phase's checklist is ticked and checks are green.
 - The two laptops' folders don't overlap. The first real merge point is Phase 3, when core is wired into the overlay.
 
