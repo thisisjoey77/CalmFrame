@@ -47,6 +47,13 @@
         overflow: hidden;
       }
 
+      /* The page shows and hides the gate and the app with the hidden attribute. Any
+         author display rule (such as #gate's display: grid) beats the browser's own
+         [hidden] { display: none }, so restate it here or the gate never goes away. */
+      [hidden] {
+        display: none !important;
+      }
+
       /* ------------------------------------------------------------------ */
       /* Warning gate                                                        */
       /* ------------------------------------------------------------------ */
