@@ -73,8 +73,9 @@ let quitting = false
 
 /** Debug-only: cycle through DEBUG_CAPTURE_SIZES and log the frame rate of each. */
 const fpsSweep = process.env['CALMFRAME_FPS_SWEEP'] === '1'
-/** Stretch (trail #9): capture with the native module instead of Chromium. */
-const nativeCaptureRequested = process.env[NATIVE_CAPTURE_ENV] === '1'
+/** Capture with the native module (trail #9) unless CALMFRAME_NATIVE_CAPTURE=0. The FPS
+ *  sweep measures Chromium's capture at each size cap, so it always uses Chromium's. */
+const nativeCaptureRequested = process.env[NATIVE_CAPTURE_ENV] !== '0' && !fpsSweep
 const nativeCapture = new NativeCapture()
 /** Debug-only: show the Phase 0 red tint on the overlay, and run the capture-leak check. */
 const debugTint = process.env['CALMFRAME_DEBUG_TINT'] === '1'

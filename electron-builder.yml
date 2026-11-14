@@ -9,6 +9,7 @@ files:
   - '!src/*'
   - '!docs/*'
   - '!tools/*'
+  - '!native/*'
   - '!measurements/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!vitest.config.{js,ts,mjs,cjs}'
@@ -17,6 +18,10 @@ files:
   - '!{tsconfig.json,tsconfig.core.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# The native capture module (npm run native:build), loaded from resources/native.
+extraResources:
+  - from: native/capture/build/Release/calmframe_capture.node
+    to: native/calmframe_capture.node
 win:
   executableName: calmframe
 nsis:

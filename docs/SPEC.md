@@ -436,6 +436,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 
 - The main process picks the primary screen as the source and grants it through Electron's [display-media request handler](https://www.electronjs.org/docs/latest/api/desktop-capturer). The renderer then opens the stream.
 - Request 60 fps, cap resolution at 960×540 (lowered from 1920×1080 in Phase 0 to hold 50 fps), no audio, and cursor excluded if the constraint is honoured. Chromium does not honour it.
+- **Since Sat Nov 14 the default capture is the native module** (see "Native capture" under the build plan): full size, 60 fps, no cursor. The two points above describe Chromium's capture, which stays as the automatic fallback.
 - Use the video element's per-frame callback so each frame is processed once, with its timestamps.
 
 ### Safety mechanisms
@@ -461,7 +462,8 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Minimum dim d | 0.4 |
 | Hold, fade | 1.5 s, 0.75 s |
 | Heartbeat, watchdog | 250 ms, 750 ms |
-| Capture | 60 fps, max 960×540 (was 1920×1080; see Phase 0 results) |
+| Capture | 60 fps, full size with the native module; max 960×540 with Chromium's fallback (see Phase 0 results and "Native capture") |
+| Native capture repeat | 20 ms: the latest frame is sent again when the screen has not changed for this long |
 
 ### Stack and repo layout
 
@@ -473,7 +475,8 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   README.md            what it is, how to run, credits, what we built vs used
   docs/SPEC.md         this document, exported as Markdown
   .claude/, .entire/   Claude Code settings and Entire session capture (hooks, skills)
-  src/main/            windows, tray, capture grant, settings, kill switch, watchdog
+  native/capture/      C++ screen capture module (Desktop Duplication into shared textures)
+  src/main/            windows, tray, capture grant, native capture hand-over, settings, kill switch, watchdog
   src/preload/         contextBridge API between main and the renderers (from the template)
   src/overlay/         capture, GPU pipeline, shaders, frame loop
   src/dashboard/       graph, thumbnail, log, controls
@@ -769,6 +772,30 @@ The IRIS comparison ran overnight, unattended. The latency log came from the mor
 - **IRIS's exit code is its verdict:** 0 pass, 1 fail, 2 pass with a warning, 3 error. The runner first treated 1 as an error.
 - **Still to do for this box:** three to five real clips (a music video with strobes, game footage, a talking-head negative), with their sources noted. They need someone to choose and source them.
 - **Tested in Coder without GitHub.** The overnight session could not push to the GitHub mirror, which needs the user's login. The branch went to the Coder workspace as a git bundle over `coder ssh` instead, and the suite ran there (`docs/CODER-LOG.md`).
+
+### Native capture (stretch, Sat Nov 14 morning, trail #9)
+
+Taken before the gate, at the user's request: Chromium's capture kept dipping under the 45 fps warning (50 median, 39 to 59) and capped the picture at 960×540, so the smoothed copy looked soft. This reverses "A native capture module is not planned for this weekend".
+
+- **How.** `native/capture` is a C++ N-API module, about 600 lines. A worker thread waits for each new desktop frame with DXGI Desktop Duplication on the primary output's adapter. It copies the frame into one of six shared D3D11 BGRA textures (NT handles) and waits for the copy to finish on the GPU, because Electron's import uses no keyed mutex or fence. Then it hands the slot to the main process. Main imports the texture with Electron's experimental `sharedTexture.importSharedTexture` and sends it with `sendSharedTexture` to the overlay. The overlay's preload passes it to the page, the shape of Electron's own test fixture. The page takes a `VideoFrame`, uploads it with `texImage2D` exactly as it uploaded the `<video>`, and closes it. When every reference is released, main frees the slot. Pass A, the detector and the smoothing passes are unchanged. Only a handle and three numbers cross IPC.
+- **Why Desktop Duplication, not Windows Graphics Capture** (which Phase 0 named): it draws no yellow capture border and leaves the cursor out of the image, so no ghost cursor. One consequence: it only delivers a frame when the screen changed. So the module sends the latest frame again after 20 ms without a change (`NATIVE_CAPTURE_REPEAT_MS`), and the filter and the stale-frame rule keep a steady sample rate. 20 ms is just over one 60 Hz frame, so a screen that changes every frame gets no repeats. Timer resolution is raised to 1 ms while capturing so that wait is not rounded up to 15.6 ms.
+- **Timestamps** are the frame's own present time from the system's high-resolution clock, as epoch ms, which the overlay puts on its performance clock. Chromium's `captureTime` was stamped late (Phase 0), so the capture-to-callback figures below are the first real ones.
+- **Results on the demo laptop:**
+  - Plain Node speed test, with a moving bar on screen: 60 fps at 1920×1080. The copy was done 1.1 ms after the present, and JavaScript had it 0.1 ms later. No frame was missed or dropped.
+  - In the app, frames per second over 523 s: 60 to 61 most of the time, and under 45 in only one second (43 fps), not counting the partial first second.
+  - Capture to frame handler: 1.9 ms median, 2.5 ms p95 (Chromium: 7.5 / 15.4).
+  - Capture to decision: 7.7 ms median.
+  - Capture to overlay drawn: 14 ms median, 19 ms p95 (Chromium: 20.4 / 28.0, `measurements/latency.md`).
+  - Analysis cost per frame: 0.6 to 1.0 ms median at the full 1920×1080. No busy skips while drawn (0 of 4,942).
+  - Both GPU self-tests pass.
+- **Capture exclusion holds.** With the debug tint, the capture-leak self-check passed: the red-ratio change with the tint on was 0.000 in all three cycles, and the black share was 0.00. Microsoft's page for `WDA_EXCLUDEFROMCAPTURE` does not say which capture methods it covers, so this measurement is the evidence.
+- **Colours and the user's check.** The user ran strobe bursts on the native capture, including the red-and-black mode. The red bursts were detected as red hazards (5 to 10 Hz) and smoothed with red desaturation, so the BGRA channel order is right. They judged the result good, and made native capture the default.
+- **Fallback and failure.** If the module is missing (it is built with `npm run native:build`) or cannot start, the overlay logs why and opens Chromium's capture. `CALMFRAME_NATIVE_CAPTURE=0` forces Chromium's capture, and the FPS sweep always uses it. If duplication is lost while running, the module recreates it:
+  - "Access lost" covers the secure desktop, a mode change, or a full-screen app taking over.
+  - While it is gone, no frames arrive, so the stale-frame rule turns the status to Protection off.
+  - A display-size change is not recovered: the status stays off until a restart.
+- **Packaging.** `build:win` builds the module and electron-builder copies it to `resources/native`.
+- **Not done:** secondary displays, rotated displays, and recovery after a display-size change.
 
 ### Gate: Saturday 6:00 PM
 

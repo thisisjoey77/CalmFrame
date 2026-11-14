@@ -404,8 +404,9 @@ export const VALIDATE_SECOND_MS = 1000
 // Stretch: native screen capture (native/capture, trail #9)
 // ---------------------------------------------------------------------------
 
-/** Environment variable that switches the overlay to the native capture module
- *  (Desktop Duplication into shared textures) instead of Chromium's screen capture. */
+/** The overlay captures with the native module (Desktop Duplication into shared textures)
+ *  by default, and falls back to Chromium's screen capture if the module cannot start.
+ *  Setting this environment variable to 0 forces Chromium's capture. */
 export const NATIVE_CAPTURE_ENV = 'CALMFRAME_NATIVE_CAPTURE'
 /** Desktop Duplication only delivers a frame when the screen changed. When nothing has
  *  changed for this long, the module sends the latest frame again, so detection and the

@@ -10,10 +10,11 @@ Built at EmoryHacks 2026 (Entertainment track).
 
 ## How to run
 
-Requirements: Windows 10 version 2004 or later, or Windows 11; Node.js 22 or later.
+Requirements: Windows 10 version 2004 or later, or Windows 11; Node.js 22 or later. Building the native capture module also needs Python 3 and the Visual Studio 2022 Build Tools with the "Desktop development with C++" workload.
 
 ```sh
 npm install
+npm run native:build  # the native screen capture module (once, and after changing it)
 npm run dev        # run the app
 npm test           # unit tests
 npm run build:win  # packaged installer in dist/
@@ -36,7 +37,7 @@ CalmFrame runs in the tray and opens its dashboard at the top right of the scree
 
 _TODO, summarising docs/SPEC.md:_
 
-- Capture: the primary screen at 60 fps, through an overlay window that is excluded from capture.
+- Capture: the primary screen at 60 fps and full resolution, through an overlay window that is excluded from capture. A small C++ module (`native/capture`) uses Windows' Desktop Duplication to copy each new screen frame into a shared GPU texture, which Electron's `sharedTexture` API hands to the overlay without the pixels ever leaving the GPU. If the module is missing or cannot start, CalmFrame falls back to Chromium's screen capture (`CALMFRAME_NATIVE_CAPTURE=0` forces it).
 - Detection: linear-light luminance on a 96×54 grid, a per-cell transition tracker, and the WCAG area rule over a 10° visual field.
 - Mitigation: a per-pixel running average whose strength is solved from the detected flash, plus dimming where smoothing alone can't get under the threshold.
 
@@ -66,8 +67,8 @@ _TODO. Known so far:_
 - DRM-protected video captures as black.
 - Exclusive-fullscreen games may sit above the overlay.
 - Screen recorders can't see the overlay or the dashboard. Both are excluded from capture on purpose, so the detector only ever sees the real screen.
-- Capture speed depends on screen resolution and CPU power mode. On our demo laptop, the native 2880×1800 screen captured at about 24 fps. We run it at 1920×1080 in Turbo mode with a 960×540 capture cap (about 54 fps). That makes the smoothed copy shown during a hazard softer.
-- Chromium ignores the request to leave the cursor out of the capture, so a smeared ghost cursor can appear in the smoothed copy.
+- Only the primary display is protected, and a rotated display is not supported by the native capture (it falls back to Chromium's).
+- With the fallback, Chromium's capture, speed depends on screen resolution and CPU power mode: about 50 fps at a 960×540 cap on our demo laptop, so the smoothed copy is softer, and a ghost cursor can appear in it. The native capture runs at 60 fps at full resolution and leaves the cursor out.
 
 ## Credits
 
@@ -80,6 +81,8 @@ _TODO. Known so far:_
 - [ESLint](https://eslint.org/) and [Prettier](https://prettier.io/): linting and formatting
 - [electron-builder](https://www.electron.build/): Windows installer
 - WebGL2: GPU analysis and smoothing passes (browser API)
+- Windows DXGI Desktop Duplication and Direct3D 11: native screen capture
+- [node-addon-api](https://github.com/nodejs/node-addon-api) and [node-gyp](https://github.com/nodejs/node-gyp): building the native module
 - [Entire](https://entire.com/): agent session capture, checkpoints and repository hosting
 - [Claude Code](https://claude.com/claude-code): AI coding assistant used to write much of the code
 - [IRIS (Python port, `iris-pse-detection`)](https://pypi.org/project/iris-pse-detection/), based on [EA's IRIS](https://github.com/electronicarts/IRIS): reference analyzer we compare against (validation only)
@@ -94,5 +97,6 @@ _TODO: keep this honest and current._
 | --- | --- |
 | Detector core (transition tracker, area rule, filter math, state machine) | Electron, Vite, electron-vite template and toolkit presets |
 | Overlay capture and GPU pipeline | WebGL2 |
+| Native capture module (C++, Desktop Duplication into shared textures) | Electron's `sharedTexture` API, DXGI and Direct3D 11, node-addon-api |
 | Dashboard, tray, strobe test page | IRIS (Python port), for comparison only |
 | Validator CLI and measurements | FFmpeg |
