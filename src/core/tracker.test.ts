@@ -190,6 +190,50 @@ describe('transition tracker: Step 5 bookkeeping', () => {
   })
 })
 
+describe('transition tracker: reversals that do not count (Step 5a)', () => {
+  it('follows a reversal that is not counted, without adding to the streak or the count', () => {
+    const tr = luminanceTracker()
+    tr.update([0], null, 0)
+    expect(tr.observe([1], null, 50)).toBe(1)
+    expect(tr.flip[0]).toBe(RISING)
+    tr.commit(50, [0])
+    expect(tr.dir[0]).toBe(RISING)
+    expect(tr.flipsThisFrame).toBe(1)
+    expect(tr.transitionsThisFrame).toBe(0)
+    expect([tr.streak[0], tr.count[0], tr.lastT[0]]).toEqual([0, 0, -Infinity])
+
+    // The next reversal is found from where the uncounted one left the cell, and counts.
+    expect(tr.observe([0], null, 100)).toBe(1)
+    expect(tr.flip[0]).toBe(FALLING)
+    tr.commit(100, [1])
+    expect([tr.streak[0], tr.count[0], tr.lastT[0]]).toEqual([1, 1, 100])
+  })
+
+  it('counts every reversal when no mask is given, exactly as update() does', () => {
+    const a = luminanceTracker()
+    const b = luminanceTracker()
+    const values = [0, 1, 1, 0, 1, 0, 0, 1]
+    values.forEach((y, k) => {
+      a.update([y], null, k * FRAME_MS)
+      b.observe([y], null, k * FRAME_MS)
+      b.commit(k * FRAME_MS, null)
+    })
+    expect([b.streak[0], b.count[0], b.lastT[0]]).toEqual([a.streak[0], a.count[0], a.lastT[0]])
+    expect(a.count[0]).toBe(5)
+  })
+
+  it('keeps a cell out of idle while it keeps reversing, counted or not', () => {
+    const tr = luminanceTracker()
+    tr.update([0], null, 0)
+    for (let k = 1; k <= 30; k++) {
+      tr.observe([k % 2], null, k * 50)
+      tr.commit(k * 50, [0])
+      expect(tr.dir[0]).not.toBe(IDLE)
+    }
+    expect(tr.count[0]).toBe(0)
+  })
+})
+
 describe('transition tracker: red (Step 3, Step 4 rule 7)', () => {
   function redTracker(): TransitionTracker {
     return new TransitionTracker({ cells: 1, threshold: RED_THRESHOLD, kind: 'red' })

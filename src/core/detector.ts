@@ -1,5 +1,5 @@
 /**
- * The flash detector. docs/SPEC.md, "Detection math", Steps 1 to 8.
+ * The flash detector. docs/SPEC.md, "Detection math", Steps 1 to 8 and 5a.
  *
  * A pure function of (grid of linear RGB per cell, capture timestamp), with state. The
  * overlay renderer (Phase 3) and the validator CLI (Phase 6) run the same code.
@@ -11,6 +11,7 @@
 import {
   AREA_LIMIT,
   DEFAULT_AREA_MODE,
+  DEFAULT_CONCURRENCY_RULE,
   DEFAULT_TRIGGER_MODE,
   EARLY_TRIGGER_STREAK,
   EXTENDED_FAIL_MAX_TRANSITIONS,
@@ -27,6 +28,7 @@ import {
   RED_THRESHOLD,
   STRICT_TRIGGER_COUNT,
   type AreaMode,
+  type ConcurrencyRule,
   type TriggerMode
 } from '../shared/config'
 import {
@@ -36,6 +38,7 @@ import {
   type AreaWindow,
   type Calibration
 } from './area'
+import { ConcurrencyGate } from './concurrency'
 import { redRatio, redValue, relativeLuminance } from './luminance'
 import { percentile } from './select'
 import { TransitionTracker } from './tracker'
@@ -55,6 +58,9 @@ export interface DetectorOptions {
   areaMode?: AreaMode
   /** Required for the calibrated area mode. */
   calibration?: Calibration
+  /** Which reversals count as transitions: 'one-way' (the default) ignores movement such
+   *  as scrolling, 'off' counts every reversal as the detector first did. Step 5a. */
+  concurrency?: ConcurrencyRule
   /** IRIS extended-failure rule. For the validator's like-for-like comparison only. */
   extendedFailure?: boolean
   /** Values per cell in the input: 3 (RGB, the default) or 4 (RGBA, as read back from
@@ -86,6 +92,9 @@ export interface DetectorResult {
   /** Cells that recorded a transition on this frame. */
   luminanceTransitions: number
   redTransitions: number
+  /** Cells that reversed on this frame, luminance or red, without it counting as a
+   *  transition: what the concurrency rule (Step 5a) set aside. Always 0 when it is off. */
+  ignoredReversals: number
 }
 
 export class Detector {
@@ -113,6 +122,9 @@ export class Detector {
   private readonly lumHot = new Uint8Array(GRID_CELLS)
   private readonly redHot = new Uint8Array(GRID_CELLS)
   private readonly table = new SummedAreaTable(GRID_COLS, GRID_ROWS)
+  /** Null when the concurrency rule is off. */
+  private readonly gate: ConcurrencyGate | null
+  private readonly counted = new Uint8Array(GRID_CELLS)
   private readonly scratch = new Float64Array(GRID_CELLS)
   private readonly lumExtended = new FlaggedDuration()
   private readonly redExtended = new FlaggedDuration()
@@ -132,6 +144,10 @@ export class Detector {
       GRID_ROWS,
       options.calibration
     )
+    this.gate =
+      (options.concurrency ?? DEFAULT_CONCURRENCY_RULE) === 'one-way'
+        ? new ConcurrencyGate(GRID_COLS, GRID_ROWS, this.window)
+        : null
     this.result = {
       hazard: false,
       type: 'none',
@@ -145,7 +161,8 @@ export class Detector {
       hotMask: new Uint8Array(GRID_CELLS),
       hotCells: 0,
       luminanceTransitions: 0,
-      redTransitions: 0
+      redTransitions: 0,
+      ignoredReversals: 0
     }
   }
 
@@ -189,9 +206,10 @@ export class Detector {
       redRho[i] = redRatioOf(r, g, b)
     }
 
-    // Steps 4 and 5.
-    this.lum.update(this.lumY, null, tMs)
-    this.red.update(this.redV, this.redRho, tMs)
+    // Steps 4, 5a and 5: find each cell's reversal, keep the concurrent one-way ones,
+    // and do the bookkeeping for those.
+    this.track(this.lum, this.lumY, null, tMs)
+    this.track(this.red, this.redV, this.redRho, tMs)
 
     // Steps 6 and 7: hot cells, then the area rule.
     const lumHotCells = this.markHot(this.lum, this.lumHot)
@@ -223,6 +241,10 @@ export class Detector {
     out.graphValue = Math.max(lumK, redK) / 2
     out.luminanceTransitions = this.lum.transitionsThisFrame
     out.redTransitions = this.red.transitionsThisFrame
+    out.ignoredReversals =
+      this.lum.flipsThisFrame -
+      this.lum.transitionsThisFrame +
+      (this.red.flipsThisFrame - this.red.transitionsThisFrame)
 
     let hotCells = 0
     const mask = out.hotMask
@@ -239,6 +261,22 @@ export class Detector {
     this.measureFlash(useRed ? this.red : this.lum, useRed ? this.redHot : this.lumHot)
 
     return out
+  }
+
+  /** One tracker's frame: Step 4, then Step 5 for the reversals Step 5a lets count. */
+  private track(
+    tracker: TransitionTracker,
+    values: ArrayLike<number>,
+    ratios: ArrayLike<number> | null,
+    tMs: number
+  ): void {
+    const flips = tracker.observe(values, ratios, tMs)
+    if (this.gate === null || flips === 0) {
+      tracker.commit(tMs, null)
+      return
+    }
+    this.gate.apply(tracker.flip, this.counted)
+    tracker.commit(tMs, this.counted)
   }
 
   /** Marks cells that meet the trigger (Step 7) and returns how many do. */

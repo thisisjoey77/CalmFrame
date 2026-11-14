@@ -111,6 +111,59 @@ export function* syntheticFrames(options: SequenceOptions): Generator<SyntheticF
   }
 }
 
+/**
+ * Luminance of the screen at a point and a time. x runs 0..GRID_COLS across and y runs
+ * 0..GRID_ROWS down, in cells, so 1 is 20 px on a 1920x1080 screen.
+ */
+export type Scene = (x: number, y: number, tMs: number) => number
+
+export interface SceneOptions {
+  scene: Scene
+  durationMs: number
+  /** Default CAPTURE_FPS (60). Ignored when `times` is given. */
+  fps?: number
+  /** Capture timestamps in ms, increasing, for uneven capture. */
+  times?: readonly number[]
+  /** Point samples per cell in each direction, averaged. Default 4. */
+  subSamples?: number
+}
+
+/**
+ * Grey frames of a scene that moves, such as a scrolling page or a dragged window. Each
+ * cell is the average of subSamples x subSamples points, so content that moves by part of
+ * a cell changes the cell by part of its contrast, as area averaging does.
+ */
+export function* sceneFrames(options: SceneOptions): Generator<SyntheticFrame> {
+  const fps = options.fps ?? CAPTURE_FPS
+  const sub = options.subSamples ?? 4
+  const count = options.times?.length ?? Math.round((options.durationMs * fps) / 1000)
+  const rgb = new Float32Array(GRID_COLS * GRID_ROWS * 3)
+  for (let frame = 0; frame < count; frame++) {
+    const tMs = options.times ? options.times[frame] : (frame * 1000) / fps
+    for (let gy = 0, j = 0; gy < GRID_ROWS; gy++) {
+      for (let gx = 0; gx < GRID_COLS; gx++, j += 3) {
+        let sum = 0
+        for (let sy = 0; sy < sub; sy++) {
+          for (let sx = 0; sx < sub; sx++) {
+            sum += options.scene(gx + (sx + 0.5) / sub, gy + (sy + 0.5) / sub, tMs)
+          }
+        }
+        rgb[j] = rgb[j + 1] = rgb[j + 2] = sum / (sub * sub)
+      }
+    }
+    yield { rgb, tMs, frame, waveFrame: frame }
+  }
+}
+
+/** Capture timestamps at about 40 fps from a 60 Hz screen: gaps of one display frame and
+ *  two, alternating. The demo laptop's capture looks like this (Phase 3 results). */
+export function unevenTimes(durationMs: number): number[] {
+  const displayMs = 1000 / CAPTURE_FPS
+  const times: number[] = []
+  for (let n = 0, k = 0; n * displayMs < durationMs; n += 1 + (k++ % 2)) times.push(n * displayMs)
+  return times
+}
+
 /** A w x h rectangle centred on the grid. */
 export function centredRect(w: number, h: number): Rect {
   return { x: Math.floor((GRID_COLS - w) / 2), y: Math.floor((GRID_ROWS - h) / 2), w, h }
@@ -145,6 +198,7 @@ export interface FrameRecord {
   hotCells: number
   luminanceTransitions: number
   redTransitions: number
+  ignoredReversals: number
 }
 
 export interface RunSummary {
@@ -172,14 +226,20 @@ function record(f: SyntheticFrame, r: DetectorResult): FrameRecord {
     graphValue: r.graphValue,
     hotCells: r.hotCells,
     luminanceTransitions: r.luminanceTransitions,
-    redTransitions: r.redTransitions
+    redTransitions: r.redTransitions,
+    ignoredReversals: r.ignoredReversals
   }
 }
 
 /** Runs a sequence through a detector and keeps every frame's result. */
 export function runDetector(detector: Detector, options: SequenceOptions): RunSummary {
+  return runFrames(detector, syntheticFrames(options))
+}
+
+/** Runs any frames through a detector and keeps every frame's result. */
+export function runFrames(detector: Detector, source: Iterable<SyntheticFrame>): RunSummary {
   const frames: FrameRecord[] = []
-  for (const f of syntheticFrames(options)) frames.push(record(f, detector.step(f.rgb, f.tMs)))
+  for (const f of source) frames.push(record(f, detector.step(f.rgb, f.tMs)))
   return {
     frames,
     everHazard: frames.some((r) => r.hazard),

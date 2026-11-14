@@ -39,6 +39,19 @@ export const DEFAULT_TRIGGER_MODE: TriggerMode = 'early'
 /** Early trigger: a cell is hot when its streak s reaches N. Step 7. */
 export const EARLY_TRIGGER_STREAK = 3
 
+/**
+ * The concurrency rule, Step 5a: which reversals count as transitions.
+ * - 'one-way': only reversals that at least AREA_LIMIT of some area window makes in the
+ *   same captured frame and the same direction. Scrolling and dragging make cells reverse
+ *   one after another and both ways at once, so they stop counting.
+ * - 'off': every reversal counts, the detector as first specified. The fallback.
+ */
+export type ConcurrencyRule = 'one-way' | 'off'
+export const DEFAULT_CONCURRENCY_RULE: ConcurrencyRule = 'one-way'
+/** One-way rule: reversals the other way, in the same window and frame, may number at most
+ *  this share of the reversals being counted. Step 5a. */
+export const CONCURRENCY_MAX_OPPOSING = 0.25
+
 /** Hazard when hot cells fill at least this fraction of some window. Step 6. */
 export const AREA_LIMIT = 0.25
 /** WCAG window size as a fraction of the grid in each direction. Step 6. */

@@ -6,7 +6,11 @@
  * The same class runs on luminance Y (threshold 0.10, dark limit 0.80) and on the red
  * value v (threshold 20, saturated-red ratio 0.8).
  *
- * All state lives in typed arrays allocated once. update() allocates nothing.
+ * A frame is fed in two halves so the concurrency rule (Step 5a) can sit between them:
+ * observe() runs Step 4 and reports which cells reversed, commit() does the Step 5
+ * bookkeeping for the reversals that count. update() is both, counting every reversal.
+ *
+ * All state lives in typed arrays allocated once. Feeding a frame allocates nothing.
  * Times are capture timestamps in milliseconds, never frame counts.
  */
 
@@ -59,8 +63,14 @@ export class TransitionTracker {
   private readonly highRatio: Float64Array
   /** The extremum the latest reversal started from. */
   private readonly anchor: Float64Array
+  /** The reversal each cell made on the latest frame: RISING, FALLING or 0 for none.
+   *  Filled by observe(), before the concurrency rule decides which of them count. */
+  readonly flip: Int8Array
+  /** Time of the latest reversal, counted or not. Rule 6 uses it, so a cell that keeps
+   *  reversing stays out of idle whether or not its reversals count. */
+  private readonly lastFlipT: Float64Array
 
-  // Step 5: per-cell bookkeeping.
+  // Step 5: per-cell bookkeeping, over the transitions that count.
   /** Time of the latest transition, -Infinity before the first. */
   readonly lastT: Float64Array
   /** Time between the latest two transitions, Infinity until there are two. */
@@ -81,7 +91,10 @@ export class TransitionTracker {
 
   private started = false
   private prevT = 0
-  /** Cells that recorded a transition on the latest update. */
+  private gapReset = false
+  /** Cells that reversed on the latest frame, counted or not. */
+  flipsThisFrame = 0
+  /** Cells whose reversal on the latest frame was counted as a transition. */
   transitionsThisFrame = 0
 
   constructor(options: TrackerOptions) {
@@ -97,6 +110,8 @@ export class TransitionTracker {
     this.lowRatio = new Float64Array(n)
     this.highRatio = new Float64Array(n)
     this.anchor = new Float64Array(n)
+    this.flip = new Int8Array(n)
+    this.lastFlipT = new Float64Array(n)
     this.lastT = new Float64Array(n)
     this.interval = new Float64Array(n)
     this.swing = new Float64Array(n)
@@ -110,6 +125,8 @@ export class TransitionTracker {
   /** Forget everything. The next update starts every cell idle at its current value. */
   reset(): void {
     this.dir.fill(IDLE)
+    this.flip.fill(0)
+    this.lastFlipT.fill(-Infinity)
     this.lastT.fill(-Infinity)
     this.interval.fill(Infinity)
     this.swing.fill(0)
@@ -117,16 +134,28 @@ export class TransitionTracker {
     this.count.fill(0)
     this.ringHead.fill(0)
     this.started = false
+    this.gapReset = false
+    this.flipsThisFrame = 0
     this.transitionsThisFrame = 0
   }
 
   /**
-   * Feed one frame.
+   * Feed one frame, counting every reversal as a transition.
    * @param values per-cell Y (luminance) or v (red)
    * @param ratios per-cell red ratio; required for a red tracker, ignored otherwise
    * @param t capture timestamp in ms, strictly increasing
    */
   update(values: ArrayLike<number>, ratios: ArrayLike<number> | null, t: number): void {
+    this.observe(values, ratios, t)
+    this.commit(t, null)
+  }
+
+  /**
+   * First half of a frame, Step 4: follow each cell's extremum and note its reversal, if
+   * any, in `flip`. Follow it with commit() for the same frame.
+   * @returns how many cells reversed
+   */
+  observe(values: ArrayLike<number>, ratios: ArrayLike<number> | null, t: number): number {
     const n = this.cells
     const red = this.isRed
     if (red && ratios === null) throw new Error('A red tracker needs red ratios')
@@ -139,32 +168,30 @@ export class TransitionTracker {
         this.low[i] = this.high[i] = this.ext[i] = this.anchor[i] = y
         this.lowRatio[i] = this.highRatio[i] = this.extRatio[i] = rho
       }
+      this.flip.fill(0)
       this.started = true
       this.prevT = t
-      this.transitionsThisFrame = 0
-      return
+      this.gapReset = false
+      this.flipsThisFrame = 0
+      return 0
     }
 
     // "Known behaviour at the edges": a frame gap over 250 ms resets all streaks. The
     // 167 ms streak rule below already implies it; it stays explicit because the spec
     // lists it as its own guarantee.
-    const gapReset = t - this.prevT > FRAME_GAP_RESET_MS
+    this.gapReset = t - this.prevT > FRAME_GAP_RESET_MS
     this.prevT = t
 
     const { dir, ext, low, high, extRatio, lowRatio, highRatio, anchor } = this
-    const { lastT, interval, swing, streak, count, ring, ringHead } = this
+    const { flip, lastFlipT, swing } = this
     // Constants copied to locals: this loop runs once per cell per frame, and some module
     // loaders (Vitest's among them) turn every read of an import into a property lookup.
-    const cap = TRACKER_RING_CAPACITY
-    const fastMs = FAST_TRANSITION_INTERVAL_MS
-    const windowMs = COUNT_WINDOW_MS
     const idleMs = TRACKER_IDLE_RESET_MS
-    let transitions = 0
+    let flips = 0
 
     for (let i = 0; i < n; i++) {
       const y = values[i]
       const rho = red ? (ratios as ArrayLike<number>)[i] : 0
-      if (gapReset) streak[i] = 0
 
       const d = dir[i]
       let size = -1 // size of the reversal recorded this frame, or -1 for none
@@ -219,9 +246,47 @@ export class TransitionTracker {
       }
 
       if (size >= 0) {
-        // A transition: e = Y in the new direction, then the Step 5 bookkeeping.
+        // A reversal: e = Y in the new direction.
         ext[i] = y
         extRatio[i] = rho
+        flip[i] = dir[i]
+        lastFlipT[i] = t
+        flips++
+      } else {
+        flip[i] = 0
+        if (d !== IDLE && t - lastFlipT[i] >= idleMs) {
+          // Rule 6: no reversal for 1 s returns the cell to idle at the current value.
+          dir[i] = IDLE
+          low[i] = high[i] = y
+          lowRatio[i] = highRatio[i] = rho
+        }
+      }
+
+      if (dir[i] !== IDLE) swing[i] = Math.abs(ext[i] - anchor[i])
+    }
+
+    this.flipsThisFrame = flips
+    return flips
+  }
+
+  /**
+   * Second half of a frame, Step 5: the bookkeeping for the reversals observe() found.
+   * @param counted per cell, non-zero where this frame's reversal counts as a transition
+   *                (Step 5a), or null to count them all
+   */
+  commit(t: number, counted: ArrayLike<number> | null): void {
+    const n = this.cells
+    const gapReset = this.gapReset
+    const { flip, lastT, interval, streak, count, ring, ringHead } = this
+    const cap = TRACKER_RING_CAPACITY
+    const fastMs = FAST_TRANSITION_INTERVAL_MS
+    const windowMs = COUNT_WINDOW_MS
+    let transitions = 0
+
+    for (let i = 0; i < n; i++) {
+      if (gapReset) streak[i] = 0
+
+      if (flip[i] !== 0 && (counted === null || counted[i])) {
         const gap = t - lastT[i]
         streak[i] = gap <= fastMs ? streak[i] + 1 : 1
         interval[i] = gap
@@ -235,14 +300,7 @@ export class TransitionTracker {
         ring[base + ((ringHead[i] + c) % cap)] = t
         count[i] = c + 1
         transitions++
-      } else if (d !== IDLE && t - lastT[i] >= idleMs) {
-        // Rule 6: no transition for 1 s returns the cell to idle at the current value.
-        dir[i] = IDLE
-        low[i] = high[i] = y
-        lowRatio[i] = highRatio[i] = rho
       }
-
-      if (dir[i] !== IDLE) swing[i] = Math.abs(ext[i] - anchor[i])
 
       // Count c: drop transitions that have left the 1 s window.
       let c = count[i]

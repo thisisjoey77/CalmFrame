@@ -132,6 +132,26 @@ Each cell stores three things, all driven by capture timestamps rather than fram
 
 The 167 ms figure is the three-per-second limit restated. More than 3 flashes per second means more than 6 transitions per second, so less than 1/6 s between them.
 
+### Step 5a: only concurrent, one-way reversals count
+
+Added Sat Nov 14, after Phase 4 testing. Steps 4 and 5 alone treat movement as flashing. When a page scrolls or a window is dragged, light and dark content passes over each cell, so the cell reverses again and again although nothing on screen flashes. On the demo laptop this switched the overlay on for ordinary scrolling (see "Movement false triggers" under Phase 4).
+
+WCAG's area rule is about flashes "occurring concurrently". A strobe makes a whole region brighter in one frame and darker in a later one. Movement makes cells reverse one after another, and in any single frame some cells get brighter while their neighbours get darker. So, each frame, between Step 4 and the bookkeeping of Step 5:
+
+1. Collect the cells that reversed on this frame, split into rising and falling.
+2. A rising reversal counts as a transition only if some position of the area window (Step 6) that contains the cell holds rising cells over at least 25% of the window, and falling cells numbering at most a quarter of the rising ones. Falling reversals are the mirror image.
+3. A reversal that does not count still moves the cell's direction and extremum (Step 4) and keeps the cell out of idle. It adds nothing to t\_last, the count or the streak, so it reaches neither trigger and not the graph.
+4. Luminance and red are judged separately.
+
+The rule is a detector option, `concurrency`, with two values. `one-way` is the default. `off` counts every reversal, which is the detector exactly as first specified, kept as the fallback. The debug window has a checkbox that switches between them while the app runs.
+
+What the rule gives up, each pinned by a test in `src/core/motion.test.ts`:
+
+- **Inverting patterns are no longer caught.** A checkerboard of 60 px squares that swaps black and white has half its cells going each way, so neither direction is one-way. Fine patterns were already exempt (Step 2). Coarse ones count as a flash under WCAG, so this is a real loss, accepted because such content is rare and movement is constant. Halves of the screen flashing in turn are still caught, because each half fills windows of its own.
+- **A small flash on a fast-scrolling page can be caught one transition late**, about 50 ms at 10 Hz, because the scrolling around it reverses cells both ways inside the same window.
+- **Very fast scrolling still counts.** Once a single edge sweeps a quarter of a window in one captured frame (about 5,400 px/s at 60 fps, 3,600 px/s at 40 fps), its reversals are concurrent and one-way by any definition.
+- **Repaints are not movement.** A tab switch or page load that repaints a window three times in a row reverses every cell together, exactly like the start of a strobe. The rule does nothing for these. The trigger count N is the only control (Step 7).
+
 ### Step 6: the area rule
 
 Mark a cell hot when its streak or count meets the trigger (step 7). Then slide a window the size of a 10° visual field over the grid and find the largest hot fraction:
@@ -183,6 +203,7 @@ These are predictions. Your slow-motion measurement replaces them. The table als
 
 - **Scene cuts** produce one transition and never trigger. A cut to white and back produces two and does not trigger at N = 3.
 - **Lightning or gunfire** with two quick double-flashes can trigger early mode. That is the accepted false positive of a safety default.
+- **Scrolling and dragging** make cells reverse, but one after another and both ways at once, so Step 5a does not count them. A window repainted three times in a row (a tab switch) still triggers early mode at N = 3.
 - **Capture rate** bounds what you can see. At 60 fps capture you resolve up to 30 Hz. Below 45 fps, show a warning in the dashboard.
 - **Frame gaps** over 250 ms reset all streaks, so a stall cannot fake a fast sequence.
 - **Static spatial patterns** (stripes) are a separate hazard that IRIS detects and this spec does not. List it under future work.
@@ -343,6 +364,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Fast-transition interval | 167 ms |
 | Counting window | 1.0 s |
 | Trigger | Early, N = 3 |
+| Concurrency rule | One-way: a quarter of a window reversing the same way in one frame, with at most 0.25 as many reversing the other way (Step 5a) |
 | Area limit, window | 0.25 of a window one third of the grid each way |
 | Target residual ρ | 0.08 |
 | α range, warm α | 0.03 to 0.30, 0.25 |
@@ -519,6 +541,27 @@ Findings:
 - [ ] On the 10 Hz test strobe the screen looks like steady grey, while the detector still reports the hazard underneath.
 - [ ] The overlay never toggles during a continuous strobe.
 - [ ] The watchdog hides a deliberately frozen overlay.
+
+#### Movement false triggers (Sat Nov 14, Windows demo laptop)
+
+Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Code, dragging a window and opening a window each switched the overlay on. In one run of about 10 minutes there were 7 triggers from window and tab actions alone, each smoothing the screen for about 2.25 s (the hold plus the fade). The fix is Step 5a. This section records how it was chosen.
+
+- **The cause, measured.** In simulated screens run through the real detector, 86 to 100% of a strobe's hot cells made their latest reversal in the same captured frame. For scrolling and dragging it was 12 to 55%.
+- **"At the same time" alone was not enough.** A fast scroll moves the page 33 to 67 px per captured frame, so more than a quarter of a window does change in a single frame. Requiring the reversals to also go the same way is what separates the two.
+- **Results in simulation**, 12 movement cases and 10 strobe cases, at an even 60 fps and at an uneven 40 fps like the demo laptop's capture:
+
+  | Rule | Movement cases that trigger (60 fps / 40 fps) | Strobes caught | Strobe delay |
+  | --- | --- | --- | --- |
+  | Steps 4 and 5 only (`off`) | 11 / 11 of 12 | 10 of 10 | none |
+  | N = 4 only | 9 / 9 | 10 of 10 | 33 to 133 ms |
+  | Same frame, either direction | 8 / 8 | 10 of 10 | none |
+  | Same frame, same direction (`one-way`) | 0 / 2 | 9 of 10 | none |
+
+  The two movement cases left at 40 fps are 5,000 and 6,000 px/s scrolls. The strobe not caught is the inverting checkerboard. Allowing more opposing reversals than a quarter (0.35, 0.5, 0.75) let 3,000 px/s scrolling trigger again, so 0.25 stays.
+- **The simulated pages are stand-ins** (a grid of video thumbnails, a chat page with code blocks, a dragged window), not recordings of this screen. The detector with the rule on matched the prototype on every frame of every case.
+- **Cost.** A detector step took 0.5 to 0.85 ms in Vitest on the demo laptop with the rule on or off, on a still screen, a scrolling page and a 10 Hz strobe. The rule adds nothing measurable against the 4 ms budget.
+- **Not yet confirmed on the live screen.** To check: with the debug window's "Ignore movement" box ticked, scroll YouTube and VS Code, drag a window and switch tabs, then run the 10 Hz test strobe. Untick the box to compare with the old behaviour. The terminal's `[detect]` line shows how many reversals the rule set aside.
+- **Tab switches remain.** If they still trigger too often on the live screen, the next step is N = 4, which costs about half a flash more at the start of a real strobe.
 
 ### Phase 5: dashboard and controls (C, Saturday 9:00 AM to 3:00 PM)
 
