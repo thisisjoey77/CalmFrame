@@ -18,7 +18,8 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 
 ## Commands
 
-- `npm run dev`: run the app (Phase 0 state: red-tint overlay plus the debug window; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits)
+- `npm run dev`: run the app (Phase 3 state: the overlay is invisible and runs live detection, and the debug window shows the graph, timings and hazard log; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits)
+- `CALMFRAME_DEBUG_TINT=1 npm run dev`: also shows the Phase 0 red tint on the overlay and runs the automatic capture-leak check
 - `CALMFRAME_FPS_SWEEP=1 npm run dev`: measures the capture frame rate at each size cap with a moving test bar and logs a summary. Use it to check the demo-laptop setup.
 - `npm test`: Vitest, run once (`npm run test:watch` to watch)
 - `npm run typecheck`: three projects. core (src/core + src/shared, pure), node (main, preload, tests, tools), web (renderers)

@@ -304,7 +304,7 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 
 1. A frame arrives from the screen capture stream. Record its capture timestamp.
 2. Upload it to a GPU texture.
-3. Pass A: linearise and area-average down to 96×54, then read those 5,184 values back to JavaScript.
+3. Pass A: linearise and area-average down to 96×54, then read those 5,184 values back to JavaScript. The read-back is asynchronous and never stalls the frame loop (Phase 3 results).
 4. Run the detector. It returns hazard, type, f̂, ΔL and the hot mask.
 5. Step the state machine. It returns α, d and overlay opacity.
 6. Pass B: update the smoothing state in a half-float texture.
@@ -475,10 +475,43 @@ Everything else is as specified. Each half-cycle is a whole number of display fr
 
 ### Phase 3: live detection (A and B, Friday 9:30 PM to Saturday 1:00 AM)
 
-- [ ] Capture, grid and detector run in the overlay renderer, and the checkerboard test reads 0.5.
-- [ ] A graph shows flashes per second. The test page at 2 Hz stays under the line and at 10 Hz goes over it.
-- [ ] Hazard start and end are logged with timestamps.
-- [ ] Analysis costs under 4 ms per frame.
+- [x] Capture, grid and detector run in the overlay renderer, and the checkerboard test reads 0.5.
+- [x] A graph shows flashes per second. The test page at 2 Hz stays under the line and at 10 Hz goes over it.
+- [x] Hazard start and end are logged with timestamps.
+- [x] Analysis costs under 4 ms per frame.
+
+#### Phase 3 results (Fri Nov 13, Windows demo laptop, 1920×1080 at 60 Hz)
+
+All four boxes pass. The live checks used the strobe page at its default low contrast (greys 89 and 149, a 0.2 swing, 25% of a browser window snapped to half the screen):
+
+- **Checkerboard.** Pass A runs a self-test at startup. A 1-pixel checkerboard reads Y 0.5000 in every cell at 960×540 and 1920×1080, and 0.4999 to 0.5001 at 1366×768, where cells hold a fractional number of pixels. Averaging the gamma-encoded values would read 0.21. On noise, the GPU grid matches a CPU twin (`src/core/gridAverage.ts`) to 1.6e-6. The noise check catches a pass that averages only part of each cell, which a checkerboard can't. The validator can reuse the CPU twin.
+- **Graph.** At 2 Hz the graph peaked at 2.0 flashes per second and never raised a hazard. At 10 Hz it read 10.0 to 10.5 and raised a luminance hazard (ΔL 0.20, area 0.56, f̂ 8 to 11 Hz), which ended 2.99 s later with the 3 s burst.
+- **Log.** Hazard start and end, with wall-clock time and capture timestamp, appear in the debug window and the terminal.
+- **Cost.** Main-thread analysis per frame had a median of 1.0 to 1.3 ms and a p95 of at most 3.8 ms. The parts: upload and Pass A 0.2 to 0.3 ms, grid copy 0.4 ms, detector and state machine 0.3 to 0.6 ms.
+- **Latency per stage**, as median / p95 from capture timestamps:
+
+  | Stage | Median | p95 |
+  | --- | --- | --- |
+  | Captured → frame callback | 4 ms | 14 ms |
+  | Callback → grid ready | 7 to 10 ms | 12 ms |
+  | Grid → decision | 0.4 ms | 0.7 ms |
+  | Captured → decision | 12 to 13 ms | 22 to 25 ms |
+
+  The largest stage is the round trip through the GPU. Chromium stamps `captureTime` late (Phase 0), so the first stage and the total are understated, and the slow-motion footage stays the end-to-end number. Decision → overlay drawn arrives in Phase 4. At 10 Hz, early mode itself waits about 100 ms for the third reversal, so the trigger rule outweighs the whole pipeline.
+
+What changed from the plan, and why:
+
+- **Read-back is asynchronous.** A synchronous `readPixels` cost 2.1 ms on a quiet screen. Whenever another window of the app animated, it waited a full vsync (about 17 ms), blocking the overlay's main thread and dropping a third of the frames. Pass A now reads into one of 3 pixel buffers behind a fence, collected when the GPU signals. The main thread never waits: if every slot is busy, the frame is skipped and counted. Grids are processed in capture order, not newest only. The GPU finishes them in order, so dropping older grids would lose samples without saving any latency.
+- **Open: GPU-process contention.** Electron runs one GPU process for all its windows. While our own debug window animated at 60 Hz, a read-back took about 50 ms. Other apps, such as the browser or a game, don't share that queue, but the Phase 4 overlay will. Phase 4 should draw only while the overlay is visible, and measure this stage during a hazard. If it hurts the first detection, the fallback is the native capture module named in the Phase 0 results.
+- **The red tint is behind a debug flag** (`CALMFRAME_DEBUG_TINT=1`), along with the automatic capture-leak check that toggles it.
+- **Grid row 0 is the top of the screen** on both the GPU and CPU paths, and the hot mask uses the same order.
+
+Findings:
+
+- **A 0.34 s false positive while the test windows were being arranged.** It had ΔL 0.94 over 47% of a window: three fast, near full-contrast reversals, the "lightning" class this spec accepts. In Phase 4 it would show the smoothed copy for about 2 s. Arrange windows before a demo, not during it.
+- **The strobe page's frame counter and clock** change every frame in 11 to 20 cells. Those cells go hot but stay far under the area limit (144 cells), as intended.
+- **Capture ran at 41 to 48 fps**, below Phase 0's 54 fps and sometimes below the 45 fps warning. Check Turbo mode and background apps before Phase 6 measurements.
+- **The hazard-end line's peak frequency (23.5 Hz) is inflated** at the edges of the burst. During the burst, f̂ read 8 to 11 Hz. Peaks don't feed mitigation, and the state machine only lets α get stronger.
 
 ### Phase 4: smoothing overlay (A, Saturday 9:00 AM to 1:00 PM)
 
