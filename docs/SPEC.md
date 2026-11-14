@@ -682,14 +682,14 @@ Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Cod
 
 ### Phase 5: dashboard and controls (C, Saturday 9:00 AM to 3:00 PM)
 
-- [ ] The dashboard sits above the overlay and is excluded from capture, so the graph and thumbnail stay sharp and live while the rest of the screen is smoothed.
-- [ ] Scrolling graph with the limit line at 3 flashes per second.
-- [ ] Status that reads Protected, Smoothing, or Protection off, and is never wrong.
-- [ ] Raw-input thumbnail no larger than 240×135, clearly labelled. At that size it is under the area limit on a 1080p screen by design.
-- [ ] Event log lines such as "0:42, 8 Hz, 2.1 s, smoothed".
-- [ ] Sensitivity slider, on/off switch, events-mitigated counter, tray icon with a menu.
-- [ ] A warning when capture drops below 45 fps.
-- [ ] The Step 5a "Ignore movement" switch moves from the debug window to the dashboard, on by default, so the fallback to the detector as first specified stays one click away.
+- [x] The dashboard sits above the overlay and is excluded from capture, so the graph and thumbnail stay sharp and live while the rest of the screen is smoothed.
+- [x] Scrolling graph with the limit line at 3 flashes per second.
+- [x] Status that reads Protected, Smoothing, or Protection off, and is never wrong.
+- [x] Raw-input thumbnail no larger than 240×135, clearly labelled. At that size it is under the area limit on a 1080p screen by design.
+- [x] Event log lines such as "0:42, 8 Hz, 2.1 s, smoothed".
+- [x] Sensitivity slider, on/off switch, events-mitigated counter, tray icon with a menu.
+- [x] A warning when capture drops below 45 fps.
+- [x] The Step 5a "Ignore movement" switch moves from the debug window to the dashboard, on by default, so the fallback to the detector as first specified stays one click away.
 
 #### Phase 5 results (Sat Nov 14, Windows demo laptop, 1920×1080 at 150% scaling)
 
@@ -719,6 +719,7 @@ The dashboard replaces the debug window. It is plain TypeScript and canvas, one 
 - **Settings persist** in `settings.json` in the app's userData folder: sensitivity, Ignore movement, and where the dashboard was left. Each field is validated on load, so a damaged file falls back to the defaults. A position saved while the app ran (x 600, y 90) came back after a restart. Bounds are saved on every move and resize, because Windows sends `moved` only at the end of a mouse drag.
 - **Low capture rate.** The warning shows under 45 fps and stays up 5 s after the last low reading, so it doesn't come and go. During this session's testing capture ran at 39 to 50 fps, so the warning was often up. Check the demo-laptop setup before Phase 6.
 - **Cost.** Analysis per frame was 1.0 ms median and 1.7 ms p95 with the dashboard open, inside the 4 ms budget.
+- **On-screen check (Sat Nov 14, 6:50 AM, by the user, low-contrast strobe page).** Four bursts at 7 to 12 Hz. Each one turned the status to Smoothing and logged an event, for example `0:26, 11 Hz, 2.9 s, smoothed`. The overlay started to fade out 1.5 s after the last hazard and was gone 0.75 s later, and the status went back to Protected. The user checked by eye that the graph crossed the line, the raw thumbnail flickered while the protected preview stayed calm, the counter went up, and the tray menu worked. The kill switch turned protection off and back on. The slider was moved through all four positions and "Ignore movement" switched off. After a restart both came back, and so did the dashboard's position. Capture ran at 40 to 49 fps (demo setup not applied), so the low-rate warning was up for part of the time.
 
 Decisions and deviations:
 
