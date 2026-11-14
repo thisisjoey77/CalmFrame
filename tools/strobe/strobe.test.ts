@@ -8,8 +8,8 @@
  * Two jobs:
  *  1. Pin the page's numbers to docs/SPEC.md and to src/shared/config.ts, which the page
  *     cannot import.
- *  2. Pin the page's luminance math to the spec's Step 1, through a reference
- *     implementation that stands in for src/core/luminance.ts until Phase 1 merges.
+ *  2. Pin the page's luminance math to src/core/luminance.ts, so the page's "counts as a
+ *     flash" verdict keeps predicting what the detector actually does.
  */
 
 import { readFileSync } from 'node:fs'
@@ -23,6 +23,13 @@ import {
   RED_SCALE,
   RED_THRESHOLD
 } from '../../src/shared/config'
+import {
+  SRGB8_TO_LINEAR,
+  redRatio as coreRedRatio,
+  redValue as coreRedValue,
+  relativeLuminance as coreLuminance,
+  srgbToLinear
+} from '../../src/core/luminance'
 
 interface GreyFlash {
   yLow: number
@@ -306,26 +313,28 @@ describe('area as a share of the window', () => {
   })
 })
 
-describe('Phase 1 cross-check: luminance against the spec interface', () => {
-  // Phase 1 owns src/core/luminance.ts (sRGB-to-linear, relative luminance, red ratio and
-  // red value). It is not merged yet, so this reference implementation, written straight
-  // from docs/SPEC.md "Step 1: linear light" and "Step 3: the red channel", stands in for
-  // it. When Phase 1 lands, import the core module here instead of this stub and keep the
-  // assertions: they are the contract between the page and the detector.
-  const refSrgbToLinear = (c: number): number =>
-    c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+describe('cross-check against src/core/luminance (Phase 1)', () => {
+  // The page and the detector have to agree on Steps 1 and 3, or the page's "counts as a
+  // flash" verdict would not predict what the detector does. The page cannot import core
+  // (no build step, no dependencies), so these assertions are the contract between them.
+  //
+  // The two APIs are not interchangeable: core takes already-linear R, G, B, because it
+  // works on cells that were averaged in linear light on the GPU, while the page takes
+  // 8-bit sRGB, because it is choosing colours to put on screen. So they compose - core's
+  // functions over core's decoder - rather than matching one-to-one.
   const refLuminance = (r: number, g: number, b: number): number =>
-    0.2126 * refSrgbToLinear(r / 255) +
-    0.7152 * refSrgbToLinear(g / 255) +
-    0.0722 * refSrgbToLinear(b / 255)
-  const refRedRatio = (r: number, g: number, b: number): number => {
-    const rl = refSrgbToLinear(r / 255)
-    const sum = rl + refSrgbToLinear(g / 255) + refSrgbToLinear(b / 255)
-    return sum > 0 ? rl / sum : 0
-  }
+    coreLuminance(srgbToLinear(r / 255), srgbToLinear(g / 255), srgbToLinear(b / 255))
+  const refRedRatio = (r: number, g: number, b: number): number =>
+    coreRedRatio(srgbToLinear(r / 255), srgbToLinear(g / 255), srgbToLinear(b / 255))
   const refRedValue = (r: number, g: number, b: number): number =>
-    RED_SCALE *
-    Math.max(0, refSrgbToLinear(r / 255) - refSrgbToLinear(g / 255) - refSrgbToLinear(b / 255))
+    coreRedValue(srgbToLinear(r / 255), srgbToLinear(g / 255), srgbToLinear(b / 255))
+
+  it('decodes every 8-bit code to the same linear value as core', () => {
+    for (let byte = 0; byte <= 255; byte++) {
+      // SRGB8_TO_LINEAR is a Float32Array, so compare at single precision.
+      expect(S.byteToLinear(byte)).toBeCloseTo(SRGB8_TO_LINEAR[byte], 6)
+    }
+  })
 
   it('agrees on every 8-bit grey', () => {
     for (let byte = 0; byte <= 255; byte++) {
