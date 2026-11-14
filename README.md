@@ -42,7 +42,21 @@ _TODO, summarising docs/SPEC.md:_
 
 ## Measurements
 
-_TODO (Phase 6): flashes reaching the viewer with protection on and off, response time, per-second agreement with IRIS (Python port), and residual swing after smoothing._
+_TODO (Phase 6): flashes reaching the viewer with protection on and off, response time, and residual swing after smoothing._
+
+### Compared against IRIS (Python port)
+
+`tools/validate` runs CalmFrame's detector, the same code as the app, on video files, and compares it second by second with the community Python port of EA's IRIS. Results are in [measurements/iris-comparison.md](measurements/iris-comparison.md).
+
+To reproduce (Windows; Node 22 or later and Python 3.11):
+
+```sh
+python -m venv %USERPROFILE%\.calmframe\iris-venv
+%USERPROFILE%\.calmframe\iris-venv\Scripts\pip install iris-pse-detection==1.1.2 imageio-ffmpeg
+npm run validate:all     # makes the 11 test clips, runs IRIS and CalmFrame, writes the report
+```
+
+`imageio-ffmpeg` brings its own ffmpeg, so nothing needs installing system-wide. Set `CALMFRAME_FFMPEG` to use another ffmpeg, or `CALMFRAME_IRIS` for another `iris` command. To check one file: `npm run validate -- <video> [--area wcag|iris] [--trigger early|strict] [--extended]`. That writes one CSV row per second to `measurements/validate/`.
 
 ## Limitations
 
@@ -69,7 +83,7 @@ _TODO. Known so far:_
 - [Entire](https://entire.com/): agent session capture, checkpoints and repository hosting
 - [Claude Code](https://claude.com/claude-code): AI coding assistant used to write much of the code
 - [IRIS (Python port, `iris-pse-detection`)](https://pypi.org/project/iris-pse-detection/), based on [EA's IRIS](https://github.com/electronicarts/IRIS): reference analyzer we compare against (validation only)
-- [FFmpeg](https://ffmpeg.org/): test clip generation and decoding for the validator (planned)
+- [FFmpeg](https://ffmpeg.org/), via the [imageio-ffmpeg](https://pypi.org/project/imageio-ffmpeg/) package's bundled build: test clip generation and decoding for the validator
 - Standards and research: [W3C WCAG 2.3.1](https://w3c.github.io/wcag21/understanding/three-flashes-or-below-threshold.html), Epilepsy Foundation reviews (Harding et al. 2005, Fisher et al. 2005 and 2022), and [Apple's Video Flashing Reduction paper](https://developer.apple.com/accessibility/downloads/Video-Flashing-Reduction-12.pdf)
 
 ## What we built vs what we used

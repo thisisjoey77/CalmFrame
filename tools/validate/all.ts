@@ -9,7 +9,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { compareAll } from './compare-iris'
 import { DEFAULT_VENV, findFfmpeg, venvExecutable } from './ffmpeg'
@@ -63,7 +63,9 @@ async function main(): Promise<void> {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024
     })
-    if (r.status !== 0 || !existsSync(out)) {
+    // The IRIS CLI's exit code is its verdict: 0 pass, 1 fail, 2 pass with a warning.
+    // Only 3 (an error), no code at all, or no output file means it did not run.
+    if (r.status === null || r.status > 2 || !existsSync(out)) {
       throw new Error(
         `IRIS failed on ${clip.file}: ${(r.stderr || r.stdout || String(r.error)).slice(-800)}`
       )
@@ -84,6 +86,9 @@ async function main(): Promise<void> {
     irisVersion: irisVersion(),
     generatedAt: new Date().toISOString()
   })
+  // The clips are rebuilt rather than committed; their manifest (expected results, grey
+  // levels) is kept with the results.
+  copyFileSync(join(CLIP_DIR, 'manifest.json'), resolve(ROOT, 'measurements/clip-manifest.json'))
   console.log(`[all] wrote ${REPORT}.md and ${REPORT}.csv`)
 }
 

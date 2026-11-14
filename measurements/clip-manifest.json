@@ -1,0 +1,134 @@
+{
+  "generatedAt": "2026-11-14T07:55:19.272Z",
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "durationMs": 10000,
+  "leadInMs": 3000,
+  "levels": {
+    "lowGrey": {
+      "srgb": 89,
+      "luminance": 0.09989872824711389
+    },
+    "swing0.05High": {
+      "srgb": 108,
+      "luminance": 0.14995978981060856
+    },
+    "swing0.2High": {
+      "srgb": 149,
+      "luminance": 0.3005437944157765
+    }
+  },
+  "clips": [
+    {
+      "id": "flash-2hz-full",
+      "title": "2 Hz full-screen black and white",
+      "file": "flash-2hz-full.mp4",
+      "expected": {
+        "wcag": "safe",
+        "iris": "fail",
+        "irisNote": "Warning, then extended failure after 4 s"
+      }
+    },
+    {
+      "id": "flash-3.75hz-full",
+      "title": "3.75 Hz full-screen",
+      "file": "flash-3.75hz-full.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "fail",
+        "irisNote": "Fail"
+      }
+    },
+    {
+      "id": "flash-10hz-full",
+      "title": "10 Hz full-screen",
+      "file": "flash-10hz-full.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "fail",
+        "irisNote": "Fail"
+      }
+    },
+    {
+      "id": "flash-15hz-full",
+      "title": "15 Hz full-screen",
+      "file": "flash-15hz-full.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "fail",
+        "irisNote": "Fail"
+      }
+    },
+    {
+      "id": "flash-10hz-swing-0.05",
+      "title": "10 Hz, swing 0.05",
+      "file": "flash-10hz-swing-0.05.mp4",
+      "expected": {
+        "wcag": "safe",
+        "iris": "pass",
+        "irisNote": "Pass"
+      }
+    },
+    {
+      "id": "flash-10hz-swing-0.2",
+      "title": "10 Hz, swing 0.2 between two greys",
+      "file": "flash-10hz-swing-0.2.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "fail",
+        "irisNote": "Fail"
+      }
+    },
+    {
+      "id": "flash-10hz-patch-15",
+      "title": "10 Hz in a patch covering 15% of the frame",
+      "file": "flash-10hz-patch-15.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "pass",
+        "irisNote": "Pass"
+      }
+    },
+    {
+      "id": "flash-10hz-patch-30",
+      "title": "10 Hz in a patch covering 30% of the frame",
+      "file": "flash-10hz-patch-30.mp4",
+      "expected": {
+        "wcag": "luminance",
+        "iris": "fail",
+        "irisNote": "Fail"
+      }
+    },
+    {
+      "id": "flash-10hz-red",
+      "title": "10 Hz red and black",
+      "file": "flash-10hz-red.mp4",
+      "expected": {
+        "wcag": "red",
+        "iris": "fail",
+        "irisNote": "Red fail and luminance fail"
+      }
+    },
+    {
+      "id": "cuts-every-2s",
+      "title": "Hard cuts every 2 s",
+      "file": "cuts-every-2s.mp4",
+      "expected": {
+        "wcag": "safe",
+        "iris": "pass",
+        "irisNote": "Pass"
+      }
+    },
+    {
+      "id": "fade-2s-cycle",
+      "title": "Slow fade, one cycle per 2 s",
+      "file": "fade-2s-cycle.mp4",
+      "expected": {
+        "wcag": "safe",
+        "iris": "pass",
+        "irisNote": "Pass"
+      }
+    }
+  ]
+}

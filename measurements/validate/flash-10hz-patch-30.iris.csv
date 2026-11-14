@@ -1,0 +1,11 @@
+second,frames,graph_max,hazard,type,extended_failure
+0,60,0.0,no,none,no
+1,60,0.0,no,none,no
+2,60,0.0,no,none,no
+3,60,10.0,yes,luminance,no
+4,60,10.0,yes,luminance,no
+5,60,10.0,yes,luminance,no
+6,60,10.0,yes,luminance,no
+7,60,10.0,yes,luminance,no
+8,60,10.0,yes,luminance,no
+9,60,10.5,yes,luminance,no
