@@ -43,13 +43,13 @@ describe('viewer check: the detector on what the viewer sees (Phase 4)', () => {
     for (const r of late) expect(r).toBeCloseTo(1, 6)
   })
 
-  it('passes the copy smoothed with the solved alpha and d, and its residual is the 0.08 target', () => {
+  it('passes the copy smoothed with the solved alpha and d, and its residual is the target', () => {
     const { alpha, dim, residual } = filterParams(1, 10, FPS)
     expect(residual).toBeCloseTo(TARGET_RESIDUAL, 6)
     const samples = runFixed(10, { alpha, dim, opacity: 1, red: false }, 4000)
     expect(samples.some((s) => s.hazard)).toBe(false)
     // Once the filter has settled from its first frame, the measured swing is the
-    // formula's. At alpha 0.052 the drift from a white first frame is still 0.02 at 1 s,
+    // formula's. At alpha 0.046 the drift from a white first frame is still 0.02 at 1 s,
     // and the meter honestly counts it, so look at a window that starts at 2 s.
     const late = residualsFrom(samples, 3000)
     expect(late.length).toBeGreaterThan(0)

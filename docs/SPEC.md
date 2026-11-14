@@ -210,7 +210,7 @@ These are predictions. Your slow-motion measurement replaces them. The table als
 
 ## Mitigation math
 
-During a hazard the overlay shows a time-averaged copy of the screen, with the averaging strength computed from the detected flash so the leftover brightness swing lands at 0.08, under WCAG's 0.10 flash threshold. Mild flashes get a light touch and violent ones get heavy smoothing.
+During a hazard the overlay shows a time-averaged copy of the screen, with the averaging strength computed from the detected flash so the leftover brightness swing lands at 0.07, under WCAG's 0.10 flash threshold. Mild flashes get a light touch and violent ones get heavy smoothing.
 
 ### The filter
 
@@ -243,7 +243,7 @@ Anything above 0.10 is still a flash by the standard. A fixed α of 0.15 fails a
 
 ### Choosing α from the detection
 
-Set the target residual ρ = 0.08 and invert the formula, using the detector's f̂ and ΔL:
+Set the target residual ρ = 0.07 and invert the formula, using the detector's f̂ and ΔL. The target was 0.08 until Phase 4, where uneven capture left more swing than the formula predicts (see "Phase 4 results"):
 
 ```latex
 \alpha = 1 - \left( \frac{\Delta L - \rho}{\Delta L + \rho} \right)^{1/n} \qquad n = \frac{f_s}{2 \hat{f}}
@@ -251,11 +251,11 @@ Set the target residual ρ = 0.08 and invert the formula, using the detector's f
 
 | Flash | Required α |
 | --- | --- |
-| ΔL = 1.0 at 10 Hz | 0.052 |
-| ΔL = 0.5 at 10 Hz | 0.10 |
-| ΔL = 0.3 at 10 Hz | 0.17 |
-| ΔL = 1.0 at 15 Hz | 0.077 |
-| ΔL = 1.0 at 3 Hz | 0.016 |
+| ΔL = 1.0 at 10 Hz | 0.046 |
+| ΔL = 0.5 at 10 Hz | 0.09 |
+| ΔL = 0.3 at 10 Hz | 0.15 |
+| ΔL = 1.0 at 15 Hz | 0.068 |
+| ΔL = 1.0 at 3 Hz | 0.014 |
 
 Clamp α to the range 0.03 to 0.30. Below 0.03 the image becomes a half-second smear and stops being watchable.
 
@@ -267,7 +267,7 @@ When the clamp stops α short, compute the residual r that the clamped α actual
 d = \min\!\left(1,\; \frac{\rho}{r}\right), \quad d \ge 0.4 \qquad \text{output} = d \cdot S
 ```
 
-Worst case, a full-contrast 3 Hz strobe: α clamps at 0.03, r = 0.15, so d = 0.53. The picture is heavily smoothed and about half brightness. That is the hard corner, and you should say so if asked.
+Worst case, a full-contrast 3 Hz strobe: α clamps at 0.03, r = 0.15, so d = 0.46. The picture is heavily smoothed and a little under half brightness. That is the hard corner, and you should say so if asked.
 
 ### Red flashes
 
@@ -366,7 +366,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Trigger | Early, N = 3 |
 | Concurrency rule | One-way: a quarter of a window reversing the same way in one frame, with at most 0.25 as many reversing the other way (Step 5a) |
 | Area limit, window | 0.25 of a window one third of the grid each way |
-| Target residual ρ | 0.08 |
+| Target residual ρ | 0.07 (0.08 until Phase 4) |
 | α range, warm α | 0.03 to 0.30, 0.25 |
 | Minimum dim d | 0.4 |
 | Hold, fade | 1.5 s, 0.75 s |

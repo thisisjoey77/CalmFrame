@@ -62,7 +62,7 @@ export const AREA_WINDOW_COLS = Math.round(GRID_COLS * AREA_WINDOW_FRACTION)
 export const AREA_WINDOW_ROWS = Math.round(GRID_ROWS * AREA_WINDOW_FRACTION)
 
 /** Target residual swing after smoothing, under WCAG's 0.10. "Choosing alpha". */
-export const TARGET_RESIDUAL = 0.08
+export const TARGET_RESIDUAL = 0.07
 /** Smallest alpha allowed; below this the image smears. "Choosing alpha". */
 export const ALPHA_MIN = 0.03
 /** Largest alpha allowed during a hazard. "Choosing alpha". */

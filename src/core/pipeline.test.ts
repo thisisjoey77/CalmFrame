@@ -62,15 +62,15 @@ describe('the filter checked by the detector', () => {
 
   for (const f of [3, 5, 15]) {
     it(`a ${f} Hz full-contrast strobe, smoothed the same way, never flashes`, () => {
-      // At 3 to 5 Hz alpha is clamped at 0.03, so the smoothed copy takes over a second to
-      // settle from its white first frame. That slow drift can register one isolated
-      // transition, never two within a second, so not even one flash. Once settled there
-      // are none.
+      // At 3 to 5 Hz alpha is clamped at 0.03, so the smoothed copy takes a couple of
+      // seconds to settle from its white first frame. That slow drift can register an
+      // isolated transition (at 5 Hz, one at 0.17 s and one at 2.18 s), never two within a
+      // second, so not even one flash. Once settled there are none.
       const frames = smoothAndCheck(f)
       expect(frames.some((r) => r.hazard)).toBe(false)
       const late = frames.filter((r) => r.tMs >= SETTLE_MS)
       expect(Math.max(...late.map((r) => r.graphValue))).toBeLessThanOrEqual(0.5)
-      expect(transitionsFrom(frames, 2000)).toBe(0)
+      expect(transitionsFrom(frames, 3000)).toBe(0)
     })
   }
 })

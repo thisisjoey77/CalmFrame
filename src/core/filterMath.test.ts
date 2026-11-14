@@ -78,11 +78,11 @@ describe('Phase 1 box 6: the residual formula ("How much flicker survives")', ()
 describe('Phase 1 box 6: the alpha solver ("Choosing alpha from the detection")', () => {
   // [dL, f, required alpha, decimals the spec gives]
   const table: [number, number, number, number][] = [
-    [1.0, 10, 0.052, 3],
-    [0.5, 10, 0.1, 2],
-    [0.3, 10, 0.17, 2],
-    [1.0, 15, 0.077, 3],
-    [1.0, 3, 0.016, 3]
+    [1.0, 10, 0.046, 3],
+    [0.5, 10, 0.09, 2],
+    [0.3, 10, 0.15, 2],
+    [1.0, 15, 0.068, 3],
+    [1.0, 3, 0.014, 3]
   ]
 
   it('reproduces the spec table', () => {
@@ -116,10 +116,10 @@ describe('Phase 1 box 6: the alpha solver ("Choosing alpha from the detection")'
 })
 
 describe('dimming ("Dimming covers what smoothing cannot")', () => {
-  it('handles the worst case: full contrast at 3 Hz smooths at 0.03 and dims to 0.53', () => {
+  it('handles the worst case: full contrast at 3 Hz smooths at 0.03 and dims to 0.46', () => {
     const n = halfCycleFrames(FPS, 3)
     expect(residualSwing(1, ALPHA_MIN, n)).toBeCloseTo(0.15, 2)
-    expect(dimFactor(1, ALPHA_MIN, n)).toBeCloseTo(0.53, 2)
+    expect(dimFactor(1, ALPHA_MIN, n)).toBeCloseTo(0.46, 2)
   })
 
   it('leaves full brightness when smoothing alone is enough', () => {
@@ -132,7 +132,7 @@ describe('dimming ("Dimming covers what smoothing cannot")', () => {
     expect(dimFactor(1, ALPHA_MIN, 100)).toBe(DIM_MIN)
   })
 
-  it('brings every hazardous strobe at 45 to 60 fps to the 0.08 target or under', () => {
+  it('brings every hazardous strobe at 45 to 60 fps to the target or under', () => {
     for (const fps of [45, 54, 60]) {
       for (const f of [3, 3.75, 5, 7.5, 10, 15, 30]) {
         for (const flashSize of [0.1, 0.2, 0.5, 0.8, 1]) {

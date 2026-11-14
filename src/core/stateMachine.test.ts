@@ -31,7 +31,7 @@ describe('Phase 1 box 7: state machine', () => {
     expect(out.opacity).toBe(1)
     expect(out.changed).toBe(true)
     expect(out.alpha).toBeCloseTo(filterParams(1, 10, FPS).alpha, 12)
-    expect(out.alpha).toBeCloseTo(0.052, 3)
+    expect(out.alpha).toBeCloseTo(0.046, 3)
   })
 
   it('holds for 1.5 s after the last hazard frame', () => {
@@ -53,11 +53,11 @@ describe('Phase 1 box 7: state machine', () => {
   it('fades opacity 1 to 0 over 0.75 s while alpha eases to warm and d to 1', () => {
     const sm = new OverlayStateMachine()
     const t0 = 0
-    // Full contrast at 3 Hz: alpha clamps at 0.03 and d is 0.53.
+    // Full contrast at 3 Hz: alpha clamps at 0.03 and d is 0.46.
     sm.step(t0, { hazard: true, type: 'luminance', frequencyHz: 3, flashSize: 1 }, FPS)
     const active = snap(sm.step(t0 + FRAME_MS, none, FPS))
     expect(active.alpha).toBe(ALPHA_MIN)
-    expect(active.dim).toBeCloseTo(0.53, 2)
+    expect(active.dim).toBeCloseTo(0.46, 2)
 
     const start = t0 + HOLD_MS
     const half = snap(sm.step(start + FADE_MS / 2, none, FPS))
