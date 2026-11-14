@@ -1,18 +1,49 @@
 /**
- * The overlay's four states. docs/SPEC.md, "Mitigation math", "On fast, off slow".
+ * The overlay's states. docs/SPEC.md, "Mitigation math", "On fast, off slow", plus the
+ * optional pre-arm pair from "Detection math", Step 7a.
  *
  * On within one frame, off only after a 1.5 s hold and a 0.75 s fade, so the overlay can
  * never switch in time with a strobe and become a hazard itself. Each step returns the
  * filter's alpha, the dim factor d and the overlay opacity for that frame.
  *
+ * Armed and Disarming sit ahead of Active and exist only when pre-arm is on. They never
+ * write alpha, dim, opacity or red: their request lives in prearmAlpha and prearmOpacity,
+ * so a renderer that reads only the original fields behaves exactly as it did before.
+ *
  * step() allocates nothing and returns the same output object every frame.
  */
 
-import { ALPHA_MIN, ALPHA_WARM, DIM_MIN, FADE_MS, HOLD_MS } from '../shared/config'
+import {
+  ALPHA_MIN,
+  ALPHA_WARM,
+  DIM_MIN,
+  FADE_MS,
+  HOLD_MS,
+  PREARM_ALPHA,
+  PREARM_ENABLED,
+  PREARM_FADE_MS,
+  PREARM_MAX_MS,
+  PREARM_OPACITY,
+  PREARM_REARM_QUIET_MS
+} from '../shared/config'
 import type { HazardType } from './detector'
 import { filterParams, type FilterParams } from './filterMath'
 
-export type OverlayStateName = 'safe' | 'active' | 'release' | 'disabled'
+export type OverlayStateName =
+  | 'safe'
+  /** Pre-arm only: one reversal has covered the area limit; light smoothing requested. */
+  | 'armed'
+  /** Pre-arm only: nothing followed, so the request is fading back out. */
+  | 'disarming'
+  | 'active'
+  | 'release'
+  | 'disabled'
+
+export interface OverlayStateMachineOptions {
+  /** Pre-arm (Step 7a). Off by default, so Armed and Disarming are unreachable and the
+   *  prearm outputs stay neutral for every frame. */
+  prearm?: boolean
+}
 
 /** The parts of a DetectorResult the state machine reads. */
 export interface Detection {
@@ -20,6 +51,8 @@ export interface Detection {
   type: HazardType
   frequencyHz: number
   flashSize: number
+  /** Pre-arm's area rule (Step 7a). Treated as false when absent. */
+  arm?: boolean
 }
 
 export interface StateOutput {
@@ -34,6 +67,11 @@ export interface StateOutput {
   red: boolean
   /** True on the step where the state changed (for logging). */
   changed: boolean
+  /** Pre-arm's requested overlay opacity, 0 unless Armed or Disarming. Phase 4 may act on
+   *  it; the fields above are never written by pre-arm, so ignoring it is safe. */
+  prearmOpacity: number
+  /** Pre-arm's requested filter strength, ALPHA_WARM unless Armed or Disarming. */
+  prearmAlpha: number
 }
 
 export class OverlayStateMachine {
@@ -43,14 +81,25 @@ export class OverlayStateMachine {
     dim: 1,
     opacity: 0,
     red: false,
-    changed: false
+    changed: false,
+    prearmOpacity: 0,
+    prearmAlpha: ALPHA_WARM
   }
   private readonly params: FilterParams = { alpha: 0, dim: 0, residual: 0 }
+  private readonly prearmEnabled: boolean
   private lastHazardT = -Infinity
   private releaseStartT = 0
+  /** Last frame on which pre-arm's area rule was met, in any state. */
+  private lastArmT = -Infinity
+  private armedStartT = 0
+  private disarmStartT = 0
   /** Alpha and d at the moment the release began; the fade eases from these. */
   private releaseAlpha = ALPHA_WARM
   private releaseDim = 1
+
+  constructor(options: OverlayStateMachineOptions = {}) {
+    this.prearmEnabled = options.prearm ?? PREARM_ENABLED
+  }
 
   get state(): OverlayStateName {
     return this.out.state
@@ -66,12 +115,37 @@ export class OverlayStateMachine {
     const out = this.out
     out.changed = false
 
+    const arm = this.prearmEnabled && detection.arm === true
+    // How long pre-arm's area rule had been unmet before this frame. Read before the
+    // update below, so the frame that raises arm again still sees the gap it ended.
+    const quietFor = tMs - this.lastArmT
+    if (arm) this.lastArmT = tMs
+
     switch (out.state) {
       case 'disabled':
         return out
 
       case 'safe':
         if (detection.hazard) this.activate(tMs, detection, captureFps, ALPHA_WARM, 1, true)
+        // Step 7a: arm only out of a quiet screen, so sustained flashing below the trigger
+        // gets one episode at its leading edge rather than a permanently softened screen.
+        else if (arm && quietFor >= PREARM_REARM_QUIET_MS) this.armPrearm(tMs)
+        return out
+
+      case 'armed':
+        if (detection.hazard) {
+          // Pre-arm hands over. A fresh activation, since it never wrote alpha or d.
+          this.activate(tMs, detection, captureFps, ALPHA_WARM, 1, true)
+        } else if (!arm || tMs - this.armedStartT >= PREARM_MAX_MS) {
+          this.beginDisarm(tMs)
+        }
+        return out
+
+      case 'disarming':
+        // Only a hazard cuts the fade short. A fresh arm does not: letting it would keep
+        // the overlay soft indefinitely on content that flashes just under the trigger.
+        if (detection.hazard) this.activate(tMs, detection, captureFps, ALPHA_WARM, 1, true)
+        else this.disarmFade(tMs)
         return out
 
       case 'active':
@@ -126,6 +200,7 @@ export class OverlayStateMachine {
     this.enter('active')
     this.lastHazardT = tMs
     out.opacity = 1
+    this.clearPrearm()
     if (fresh) {
       // Entering from Safe: start from what this flash needs, then only get stronger.
       this.target(detection, captureFps)
@@ -164,6 +239,43 @@ export class OverlayStateMachine {
     }
   }
 
+  /** Step 7a: one reversal has covered the area limit. Request light smoothing. */
+  private armPrearm(tMs: number): void {
+    const out = this.out
+    this.enter('armed')
+    this.armedStartT = tMs
+    out.prearmOpacity = PREARM_OPACITY
+    out.prearmAlpha = PREARM_ALPHA
+  }
+
+  /** Nothing followed the reversal, or the armed cap ran out. Start fading the request. */
+  private beginDisarm(tMs: number): void {
+    // The cap expires at a known instant; arm clearing is only observed on this frame.
+    const capped = this.armedStartT + PREARM_MAX_MS
+    this.disarmStartT = tMs >= capped ? capped : tMs
+    this.enter('disarming')
+    this.disarmFade(tMs)
+  }
+
+  /** The pre-arm request eases back to nothing over PREARM_FADE_MS. */
+  private disarmFade(tMs: number): void {
+    const out = this.out
+    const p = (tMs - this.disarmStartT) / PREARM_FADE_MS
+    if (p >= 1) {
+      this.enter('safe')
+      this.toSafeValues()
+      return
+    }
+    const k = p < 0 ? 0 : p
+    out.prearmOpacity = PREARM_OPACITY * (1 - k)
+    out.prearmAlpha = PREARM_ALPHA + (ALPHA_WARM - PREARM_ALPHA) * k
+  }
+
+  private clearPrearm(): void {
+    this.out.prearmOpacity = 0
+    this.out.prearmAlpha = ALPHA_WARM
+  }
+
   /** Opacity 1 -> 0 over FADE_MS while alpha eases to ALPHA_WARM and d to 1. */
   private fade(tMs: number): void {
     const out = this.out
@@ -185,6 +297,7 @@ export class OverlayStateMachine {
     out.alpha = ALPHA_WARM
     out.dim = 1
     out.red = false
+    this.clearPrearm()
   }
 
   private enter(state: OverlayStateName): void {

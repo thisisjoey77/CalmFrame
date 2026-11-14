@@ -188,8 +188,8 @@ the trigger.
 | --- | --- | --- |
 | Safe | Armed | arm is raised, and arm has been absent for the re-arm quiet period (1.0 s) |
 | Armed | Active | The trigger fires. The ordinary hazard path, with N unchanged |
-| Armed | Fading | arm clears, or the armed cap (1.0 s) is reached |
-| Fading | Safe | The pre-arm fade (0.3 s) completes. Only a hazard interrupts it, never arm |
+| Armed | Disarming | arm clears, or the armed cap (1.0 s) is reached |
+| Disarming | Safe | The pre-arm fade (0.3 s) completes. Only a hazard interrupts it, never arm |
 
 There is no separate hold. The arm signal already carries one: when it clears, no fast
 transition has arrived for 167 ms and the streak is dead, so the fade starts at once.
