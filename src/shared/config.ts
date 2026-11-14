@@ -401,6 +401,30 @@ export const VALIDATE_CLIP_CRF = 4
 export const VALIDATE_SECOND_MS = 1000
 
 // ---------------------------------------------------------------------------
+// Stretch: per-region brightness correction (trail #10)
+// ---------------------------------------------------------------------------
+
+/**
+ * How the overlay calms a hazard ("Mitigation math").
+ * - 'smooth': each pixel is averaged with its own past (Passes B and C). The method as
+ *   first specified, and the default.
+ * - 'correct': the current frame is shown, with each region's brightness scaled to that
+ *   region's running average ("Stretch: correct brightness per region"). Motion stays
+ *   sharp. Experimental, behind the dashboard's "Keep motion sharp" tick box.
+ */
+export type MitigationMethod = 'smooth' | 'correct'
+export const DEFAULT_MITIGATION_METHOD: MitigationMethod = 'smooth'
+/** A region whose mean is within this of black has nothing to scale down, and one within
+ *  this of white has nothing to scale up: its pixels take the target value itself. */
+export const CORRECTION_EPSILON = 1e-4
+/** Startup self-test of the correction pass: a generated image of this size (2.5 pixels
+ *  per cell, so cells hold a fractional number of pixels) is corrected on the GPU, and
+ *  each output byte must be within the tolerance, in 8-bit codes, of the CPU twin. */
+export const CORRECT_SELF_TEST_WIDTH = 240
+export const CORRECT_SELF_TEST_HEIGHT = 135
+export const CORRECT_SELF_TEST_TOLERANCE = 1
+
+// ---------------------------------------------------------------------------
 // Stretch: native screen capture (native/capture, trail #9)
 // ---------------------------------------------------------------------------
 
