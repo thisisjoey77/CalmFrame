@@ -109,4 +109,4 @@ The challenge requires that we build, test and collaborate in Coder workspaces. 
 
 ## Open questions
 
-- **Dashboard vs overlay stacking (decide before Phase 5).** While the overlay is solid, it covers the whole screen, including the dashboard. The judge would see a smoothed, lagging copy of the graph, the raw thumbnail smoothed to grey, and a "protected preview" that captures itself. Phase 0 showed the fix works: a window set always-on-top after the overlay, with content protection, sits above it and stays out of the capture (tested with the debug window's stacking checkbox). Waiting on the user's go-ahead before changing the spec.
+- **Dashboard vs overlay stacking: decided (Sat Nov 14).** The dashboard sits above the overlay and is excluded from capture, as the debug window's stacking checkbox does. It is in the spec's Phase 5 checklist. One consequence is still open: a screen recorder can no longer see the dashboard or its protected-preview pane, so demo footage of them has to come from the phone unless Phase 5 adds a recording switch.

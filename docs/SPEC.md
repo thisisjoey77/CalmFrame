@@ -316,7 +316,7 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 | --- | --- | --- |
 | Main process | Node | Creates windows and tray, grants screen capture to the overlay renderer, stores settings, relays messages, owns the kill switch and watchdog |
 | Overlay window | Renderer | Captures the screen, runs the GPU passes and the detector, draws the smoothed copy. Transparent, click-through, always on top, excluded from capture |
-| Dashboard window | Renderer | Hazard graph, raw thumbnail, event log, controls. Receives stats about 20 times a second |
+| Dashboard window | Renderer | Hazard graph, raw thumbnail, event log, controls. Receives stats about 20 times a second. Always on top, above the overlay, and excluded from capture, so it stays sharp and live during a hazard (decided Sat Nov 14) |
 | Detector core | Plain TypeScript, no Electron or DOM imports | Detection, filter-parameter math, overlay state machine. Shared by the app and the validator |
 | Strobe test page | Static page in a normal browser | Calibration source and safe demo clip |
 | Validator CLI | Node script | Decodes a video file, runs the detector core, compares with IRIS |
@@ -438,7 +438,7 @@ Boxes 1 and 2 passed by 9:00 PM, so the design stands and no fallback is needed.
 - **Chromium ignores `cursor: 'never'`.** It reports `cursor: always`, so the cursor is baked into captured frames, and the smoothed copy can show a smeared ghost cursor during a hazard.
 - **The capture-to-callback delay is understated.** `captureTime` is present, but the median is about 1 ms, so Chromium apparently stamps it late. Use the slow-motion measurement for latency.
 - **Chromium shrinks the frame before our shader sees it.** It averages gamma-encoded values. Patterns finer than 2 screen pixels therefore read darker than in true linear light: a 1-pixel checkerboard reads about Y = 0.22, not 0.5. Inverting patterns still cancel, so the fine-pattern exemption holds. The Step 2 acceptance test runs on a generated texture, so it still tests our shader correctly.
-- **Dashboard stacking.** A window can sit above the overlay and be excluded from capture (tested with the debug window). That fixes the dashboard-under-overlay problem noted in CLAUDE.md once the team agrees.
+- **Dashboard stacking.** A window can sit above the overlay and be excluded from capture (tested with the debug window). That fixes the dashboard-under-overlay problem. Agreed Sat Nov 14: the Phase 5 dashboard does this.
 - **Chromium shares one capture device per screen.** The first stream opened sets the format for every stream. A debug preview opened first at 480×270 and 15 fps dragged the overlay's capture down to the same. Any second capture, including the dashboard in Phase 5, must request exactly the overlay's settings, or better, use data the overlay sends (as the raw thumbnail already does).
 
 ### Phase 1: detector core (B, Friday 8:00 to 11:00 PM)
@@ -591,6 +591,7 @@ Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Cod
 
 ### Phase 5: dashboard and controls (C, Saturday 9:00 AM to 3:00 PM)
 
+- [ ] The dashboard sits above the overlay and is excluded from capture, so the graph and thumbnail stay sharp and live while the rest of the screen is smoothed.
 - [ ] Scrolling graph with the limit line at 3 flashes per second.
 - [ ] Status that reads Protected, Smoothing, or Protection off, and is never wrong.
 - [ ] Raw-input thumbnail no larger than 240×135, clearly labelled. At that size it is under the area limit on a 1080p screen by design.
@@ -704,7 +705,7 @@ The demo's job is to make an invisible product visible: the screen stays calm wh
 
 ### One gotcha to plan around
 
-Screen recorders cannot see the overlay, because it is excluded from capture by design. A screen recording of CalmFrame working shows the raw strobe. For the video, film the laptop with a phone, and use the dashboard's protected-preview pane for any on-screen footage.
+Screen recorders cannot see the overlay, because it is excluded from capture by design. A screen recording of CalmFrame working shows the raw strobe. For the video, film the laptop with a phone. The dashboard is excluded from capture too (so the detector does not analyse it and the protected preview does not capture itself), which means a screen recorder cannot see the dashboard or its protected-preview pane either. Footage of both comes from the phone, unless Phase 5 adds a switch that lets the dashboard be recorded.
 
 ### Table demo, about 90 seconds
 
@@ -869,6 +870,7 @@ Then have me verify each Phase 4 checkbox with the strobe page, starting at low 
 Read docs/SPEC.md. We are doing "Phase 5: dashboard and controls". Replace the debug window with the real dashboard and add the tray icon. Plain TypeScript and canvas, no UI framework.
 
 - Everything listed under Phase 5, plus a small "protected preview" pane showing the smoothed output, because screen recorders cannot see the overlay.
+- The dashboard window is set always-on-top after the overlay, at the same level, with content protection on, as the debug window's stacking checkbox does today. Nothing in it is smoothed, so nothing in it may flash over a hazardous area.
 - The raw thumbnail is drawn from the 96x54 grid, capped at 240x135, and labelled "Raw input (unprotected)".
 - Design goals: calm, legible at arm's length on a demo table, one large status indicator, high-contrast text, fully usable from the keyboard, no animation beyond the graph.
 - The status must be derived from the heartbeat, never from a stored flag.
