@@ -112,12 +112,24 @@ export interface SmoothSelfTestResult {
 }
 
 /** Sent every HEARTBEAT_MS from a timer in the overlay renderer. Its arrival is what the
- *  watchdog checks; the contents are for logs and, later, the dashboard status. */
+ *  watchdog checks, and its contents are what the status is derived from (Phase 5). */
 export interface Heartbeat {
   /** The overlay state machine, or 'off' when the pipeline has failed open. */
   state: OverlayStateName | 'off'
   /** Time since the last captured frame arrived, or null before the first. */
   frameAgeMs: number | null
+  /** The capture track exists and has not ended. */
+  captureLive: boolean
+}
+
+/** What main relays to the dashboard for each heartbeat: the heartbeat as the overlay sent
+ *  it, plus main's own view of the overlay window at that moment. The status is derived
+ *  from this and from how old it is (src/shared/status.ts), never from a stored flag. */
+export interface StatusBeat extends Heartbeat {
+  /** The overlay window is shown (main hides it when protection goes off). */
+  overlayVisible: boolean
+  /** Why main last switched protection off, for the status line. Null while it is on. */
+  offReason: string | null
 }
 
 /** The overlay state machine changed state ("On fast, off slow"). */
