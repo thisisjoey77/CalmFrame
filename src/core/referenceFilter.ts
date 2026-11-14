@@ -1,7 +1,8 @@
 /**
- * CPU reference for the smoothing filter, on the analysis grid. For tests only: the app
- * runs the same arithmetic on the GPU in Passes B and C (Phase 4).
- * docs/SPEC.md, "Mitigation math".
+ * CPU reference for the smoothing filter, on the analysis grid. The app runs the same
+ * arithmetic per pixel on the GPU in Passes B and C (Phase 4). The tests use this as the
+ * reference, and the live viewer check (viewerCheck.ts) runs it as the grid twin of what
+ * the overlay draws. docs/SPEC.md, "Mitigation math".
  */
 
 import { RED_DESATURATION } from '../shared/config'

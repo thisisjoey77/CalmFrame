@@ -191,6 +191,40 @@ export const ANALYSIS_BUDGET_MS = 4
 export const ANALYSIS_STATS_WINDOW = 120
 
 // ---------------------------------------------------------------------------
+// Phase 4: smoothing overlay
+// ---------------------------------------------------------------------------
+
+/** Startup self-test of Passes B and C: a generated image goes through linearise, the
+ *  half-float state and re-encoding, and each output byte must be within this many 8-bit
+ *  codes of the CPU twin's value. */
+export const SMOOTH_SELF_TEST_TOLERANCE = 1
+/** Self-test image size: every 8-bit code across, a few distinct rows down so a flipped
+ *  picture is caught. */
+export const SMOOTH_SELF_TEST_WIDTH = 256
+export const SMOOTH_SELF_TEST_HEIGHT = 8
+/** The self-test's filter step, dim and opacity: arbitrary values away from 0 and 1, so a
+ *  pass that ignores any of them fails. */
+export const SMOOTH_SELF_TEST_ALPHA = 0.25
+export const SMOOTH_SELF_TEST_DIM = 0.5
+export const SMOOTH_SELF_TEST_OPACITY = 0.5
+
+/** Viewer check: the residual swing of what the viewer sees is the peak-to-peak luminance
+ *  of each cell over the last COUNT_WINDOW_MS, kept as this many blocks, so the window
+ *  slides in steps of COUNT_WINDOW_MS / RESIDUAL_BLOCKS. */
+export const RESIDUAL_BLOCKS = 4
+
+// ---------------------------------------------------------------------------
+// Debug tooling: overlay watchdog test
+// ---------------------------------------------------------------------------
+
+/** Hidden debug command (dev builds only): freezes the overlay renderer's main thread so
+ *  the watchdog can be tested. Not shown in any UI. */
+export const DEBUG_FREEZE_ACCELERATOR = 'Control+Alt+Shift+F'
+/** How long the debug freeze blocks the renderer. Long enough for the watchdog to fire
+ *  well before it ends, short enough that the app recovers by itself. */
+export const DEBUG_FREEZE_MS = 5000
+
+// ---------------------------------------------------------------------------
 // Phase 0 spike and debug tooling (not product behaviour)
 // ---------------------------------------------------------------------------
 

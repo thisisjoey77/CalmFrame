@@ -24,6 +24,15 @@ export function srgbToLinear(c: number): number {
     : Math.pow((c + SRGB_OFFSET) / (1 + SRGB_OFFSET), SRGB_GAMMA)
 }
 
+/** One linear channel value in 0..1 back to sRGB in 0..1: the inverse of srgbToLinear,
+ *  for re-encoding the smoothed copy ("Three implementation requirements", linear light).
+ *  The overlay's Pass C runs the same formula on the GPU. */
+export function linearToSrgb(l: number): number {
+  return l <= SRGB_LINEAR_CUTOFF / SRGB_LINEAR_SLOPE
+    ? l * SRGB_LINEAR_SLOPE
+    : (1 + SRGB_OFFSET) * Math.pow(l, 1 / SRGB_GAMMA) - SRGB_OFFSET
+}
+
 function buildSrgb8Lut(): Float32Array {
   const lut = new Float32Array(256)
   for (let code = 0; code < 256; code++) lut[code] = srgbToLinear(code / 255)

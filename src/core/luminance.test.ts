@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { DARK_LIMIT, RED_RATIO } from '../shared/config'
-import { SRGB8_TO_LINEAR, redRatio, redValue, relativeLuminance, srgbToLinear } from './luminance'
+import {
+  SRGB8_TO_LINEAR,
+  linearToSrgb,
+  redRatio,
+  redValue,
+  relativeLuminance,
+  srgbToLinear
+} from './luminance'
 
 describe('luminance (Step 1)', () => {
   it('decodes the ends of the sRGB range exactly', () => {
@@ -22,6 +29,22 @@ describe('luminance (Step 1)', () => {
     for (let code = 0; code < 256; code++) {
       expect(SRGB8_TO_LINEAR[code]).toBeCloseTo(srgbToLinear(code / 255), 6)
     }
+  })
+
+  it('re-encodes linear light to the same 8-bit code it was decoded from (Phase 4)', () => {
+    // Pass C linearises, filters, then re-encodes. A round trip that drifts would tint
+    // the smoothed copy even when nothing is flashing.
+    for (let code = 0; code < 256; code++) {
+      expect(Math.round(255 * linearToSrgb(SRGB8_TO_LINEAR[code]))).toBe(code)
+    }
+    expect(linearToSrgb(0)).toBe(0)
+    expect(linearToSrgb(1)).toBeCloseTo(1, 12)
+  })
+
+  it('joins the two pieces of the encoding at the same point as the decoding', () => {
+    const edge = srgbToLinear(0.04045)
+    expect(linearToSrgb(edge)).toBeCloseTo(0.04045, 9)
+    expect(linearToSrgb(edge * 1.0001)).toBeCloseTo(0.04045, 4)
   })
 
   it('gives white Y = 1 and a grey its own level', () => {
