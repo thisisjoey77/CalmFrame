@@ -212,9 +212,11 @@ I checked this closed form against a frame-by-frame simulation and they agree to
 | α | 3 Hz | 5 Hz | 10 Hz | 15 Hz |
 | --- | --- | --- | --- | --- |
 | 0.15 | 0.67 | 0.45 | 0.24 | 0.16 |
-| 0.10 | 0.48 | 0.31 | 0.16 | 0.11 |
+| 0.10 | 0.48 | 0.31 | 0.16 | 0.10 |
 | 0.05 | 0.25 | 0.15 | 0.08 | 0.05 |
 | 0.03 | 0.15 | 0.09 | 0.05 | 0.03 |
+
+The α = 0.10, 15 Hz cell is 0.105 to three decimals. An earlier draft rounded that to 0.11; the Phase 1 tests caught it. At 0.105 it is still a flash.
 
 Anything above 0.10 is still a flash by the standard. A fixed α of 0.15 fails at every frequency in the table, which is why the filter adapts.
 
