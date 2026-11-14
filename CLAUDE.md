@@ -27,6 +27,7 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 - `npm test`: Vitest, run once (`npm run test:watch` to watch)
 - `npm run typecheck`: three projects. core (src/core + src/shared, pure), node (main, preload, tests, tools), web (renderers)
 - `npm run lint`
+- `npm run validate:all`: the Phase 6 IRIS comparison. Makes the 11 test clips, runs IRIS and the validator, writes `measurements/iris-comparison.md`. Needs the IRIS virtualenv in `%USERPROFILE%\.calmframe\iris-venv` (README, "Compared against IRIS"). `npm run validate -- <video>` checks one file.
 - `npm run build:win`: packaged Windows installer
 
 Before every commit, `npm run typecheck && npm run lint && npm test` must pass.

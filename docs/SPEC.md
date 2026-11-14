@@ -481,7 +481,7 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   src/core/            luminance, tracker, area, detector, filter math, state machine, tests
   src/shared/          message types, config defaults
   tools/strobe/        strobe test page
-  tools/validate/      clip generator, validator CLI, IRIS comparison
+  tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all)
   measurements/        slow-motion results, comparison tables
 ```
 
@@ -731,8 +731,35 @@ Decisions and deviations:
 ### Phase 6: measure and validate (D, Saturday 1:00 to 6:00 PM)
 
 - [ ] Slow-motion counts at 5, 10 and 15 Hz, protection off and on.
-- [ ] IRIS comparison table over the clip set.
+- [x] IRIS comparison table over the clip set. *The 11 synthetic clips. The three to five real clips are not added yet.*
 - [ ] Latency median and 95th percentile from the app's own log.
+
+#### Phase 6 results so far (Sat Nov 14, overnight, Windows laptop, unattended)
+
+Only the IRIS comparison so far. It needs no screen and no phone. The slow-motion counts and the latency log need the demo laptop in its demo setup and a person.
+
+- **The validator** (`tools/validate`, Prompt 8) has three steps:
+  - `make-clips` writes the 11 clips of "Test clips" as 1080p60 H.264 (CRF 4) with a 3 s lead-in, plus a manifest of the expected results.
+  - `validate` decodes with ffmpeg and averages each frame to the grid in linear light with `averageToGrid`, the CPU twin of Pass A. Then it runs the real detector with each frame's presentation time and writes one CSV row per second.
+  - `compare-iris` writes the two-by-two tables.
+
+  `npm run validate:all` runs everything. It is built with the project's own `tsc`, so it adds no npm dependency. It needs only ffmpeg, not ffprobe, so the build bundled with the Python package `imageio-ffmpeg` is enough. The README has the setup. A clip takes about 16 s to validate here, and IRIS takes about 30 s.
+- **Result** (`measurements/iris-comparison.md`), against `iris-pse-detection` 1.1.2 with its default settings:
+
+  | CalmFrame setup | Both fail | Both pass | Only IRIS | Only CalmFrame | Agreement |
+  | --- | --- | --- | --- | --- | --- |
+  | IRIS-compatible area, strict trigger, extended-failure rule | 45 | 65 | 0 | 0 | 100% (110 of 110 s) |
+  | WCAG area, strict trigger | 42 | 58 | 3 | 7 | 90.9% |
+
+  The WCAG setup differs from IRIS in exactly the two places this spec predicts:
+  - **2 Hz full-screen** (3 s where only IRIS fails). IRIS's extended-failure rule fails it from second 7, after 4 s of flashing. WCAG has no such rule, so the WCAG setup leaves it out.
+  - **The 15% patch** (7 s where only CalmFrame fails). It fills a whole 10° window, so the WCAG rule flags it, but it covers less than a quarter of the frame, so IRIS passes it.
+
+  Every clip's verdict matches the expected column of the "Test clips" table in both setups. The IRIS column there is reproduced too: the 2 Hz clip fails only by the extended rule, and the red clip fails red and luminance.
+- **A reading of the detector** the CSV makes visible: with the extended-failure option on, the detector's `hazard` flag includes the extended failure. The validator's CSV reports the trigger and the extended rule as separate columns.
+- **IRIS's exit code is its verdict:** 0 pass, 1 fail, 2 pass with a warning, 3 error. The runner first treated 1 as an error.
+- **Still to do for this box:** three to five real clips (a music video with strobes, game footage, a talking-head negative), with their sources noted. They need someone to choose and source them.
+- **Tested in Coder without GitHub.** The overnight session could not push to the GitHub mirror, which needs the user's login. The branch went to the Coder workspace as a git bundle over `coder ssh` instead, and the suite ran there (`docs/CODER-LOG.md`).
 
 ### Gate: Saturday 6:00 PM
 
