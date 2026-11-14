@@ -13,6 +13,7 @@ import {
   STATS_EVERY_N_FRAMES
 } from '../shared/config'
 import type { CaptureSize } from '../shared/messages'
+import { DEFAULT_SETTINGS, detectorOptionsFor, type Settings } from '../shared/settings'
 import { LiveAnalysis } from './analysis'
 import { openScreenStream } from './capture'
 import { GridPass } from './gridPass'
@@ -41,6 +42,8 @@ const callbackTimes: number[] = []
 const delays: number[] = []
 let framesTotal = 0
 let skippedFrames = 0
+/** When the current capture was opened, for CaptureStats.runningMs. */
+let captureOpenedAt = performance.now()
 let lastPresented = -1
 let hasCaptureTime = false
 /** When the latest frame callback ran, for the heartbeat. */
@@ -73,9 +76,13 @@ function sendStats(): void {
     height: video.videoHeight,
     skippedFrames,
     framesTotal,
-    settings: { frameRate: s?.frameRate, width: s?.width, height: s?.height, cursor: s?.cursor }
+    settings: { frameRate: s?.frameRate, width: s?.width, height: s?.height, cursor: s?.cursor },
+    runningMs: performance.now() - captureOpenedAt
   })
-  if (analysis) api.sendDetectionStats(analysis.stats())
+  if (analysis) {
+    api.sendDetectionStats(analysis.stats())
+    api.sendThumbnails(analysis.thumbnails())
+  }
 }
 
 // Each (re)started capture gets a new generation so a stale frame-callback chain stops.
@@ -140,6 +147,7 @@ async function openCapture(size: CaptureSize): Promise<void> {
   framesTotal = 0
   skippedFrames = 0
   lastPresented = -1
+  captureOpenedAt = performance.now()
   // A restart leaves a gap in the timestamps; start detection from a clean slate.
   analysis?.reset()
   const stream = await openScreenStream(CAPTURE_FPS, size.maxWidth, size.maxHeight)
@@ -158,7 +166,7 @@ async function openCapture(size: CaptureSize): Promise<void> {
  * The GPU pipeline: Pass A for detection, Passes B and C for the smoothed copy, all on the
  * overlay canvas's context. Passes A and B only draw offscreen; Pass C draws on the canvas.
  */
-function startAnalysis(): void {
+function startAnalysis(settings: Settings): void {
   canvas.addEventListener('webglcontextlost', (event) => {
     event.preventDefault()
     pipelineFailed('WebGL context lost')
@@ -189,16 +197,33 @@ function startAnalysis(): void {
   api.sendSmoothSelfTest(smoothResult)
   if (!smoothResult.pass) throw new Error(`smoothing self-test failed: ${smoothResult.detail}`)
 
-  analysis = new LiveAnalysis(pass, smooth, {
-    hazardEvent: (event) => api.sendHazardEvent(event),
-    stateChange: (change) => {
-      console.log(
-        `[state] ${change.from} -> ${change.to} (${change.reason}): alpha ${change.alpha.toFixed(3)}, d ${change.dim.toFixed(2)}, opacity ${change.opacity.toFixed(2)}`
-      )
-      api.sendStateChange(change)
+  analysis = new LiveAnalysis(
+    pass,
+    smooth,
+    {
+      hazardEvent: (event) => api.sendHazardEvent(event),
+      flashEvent: (event) => api.sendFlashEvent(event),
+      stateChange: (change) => {
+        console.log(
+          `[state] ${change.from} -> ${change.to} (${change.reason}): alpha ${change.alpha.toFixed(3)}, d ${change.dim.toFixed(2)}, opacity ${change.opacity.toFixed(2)}`
+        )
+        api.sendStateChange(change)
+      },
+      failed: pipelineFailed
     },
-    failed: pipelineFailed
-  })
+    detectorOptionsFor(settings)
+  )
+}
+
+/** The user's settings, from main. If main cannot be asked, the defaults: protection with
+ *  the spec's detector beats no protection. */
+async function loadSettings(): Promise<Settings> {
+  try {
+    return (await api.getInit()).settings
+  } catch (error) {
+    console.error('[settings] could not load, using the defaults', error)
+    return DEFAULT_SETTINGS
+  }
 }
 
 /** Every HEARTBEAT_MS, from a timer rather than the frame loop, so a static screen that
@@ -229,9 +254,10 @@ async function start(): Promise<void> {
   startHeartbeat()
   api.onProtection((enabled, reason) => analysis?.setEnabled(enabled, reason))
   api.onDebugFreeze(freeze)
-  api.onConcurrencyRule((rule) => analysis?.setConcurrency(rule))
+  api.onSettings((settings) => analysis?.configure(detectorOptionsFor(settings)))
+  const settings = await loadSettings()
   try {
-    startAnalysis()
+    startAnalysis(settings)
   } catch (error) {
     pipelineFailed(error)
   }

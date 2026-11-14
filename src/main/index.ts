@@ -6,13 +6,19 @@ import {
   desktopCapturer,
   globalShortcut,
   ipcMain,
-  BrowserWindow
+  BrowserWindow,
+  type Rectangle
 } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   CAPTURE_MAX_HEIGHT,
   CAPTURE_MAX_WIDTH,
+  DASHBOARD_HEIGHT,
+  DASHBOARD_MARGIN,
+  DASHBOARD_MIN_HEIGHT,
+  DASHBOARD_MIN_WIDTH,
+  DASHBOARD_WIDTH,
   DEBUG_CAPTURE_SIZES,
   DEBUG_FREEZE_ACCELERATOR,
   DEBUG_FREEZE_MS,
@@ -22,31 +28,53 @@ import {
   FPS_SWEEP_WARMUP_MS,
   KILL_SWITCH_ACCELERATOR,
   OVERLAY_BOTTOM_INSET,
-  WATCHDOG_MS,
-  type ConcurrencyRule
+  SETTINGS_FILE_NAME,
+  STATUS_REFRESH_MS,
+  WATCHDOG_MS
 } from '../shared/config'
+import { flashEventText } from '../shared/eventText'
 import {
   IPC,
   type CaptureSize,
   type CaptureStats,
   type DetectionStats,
+  type FlashEventMessage,
   type GridSelfTestResult,
   type HazardEvent,
+  type Heartbeat,
+  type InitInfo,
   type OverlayState,
   type SelfCheckResult,
   type SmoothSelfTestResult,
-  type StateChange
+  type StateChange,
+  type StatusBeat,
+  type Thumbnails
 } from '../shared/messages'
+import type { Settings } from '../shared/settings'
+import { KILL_SWITCH_LABEL, STATUS_LABEL, deriveStatus, type StatusView } from '../shared/status'
+import { SettingsStore } from './settingsStore'
+import { CalmTray } from './tray'
 
-type Page = 'dashboard' | 'overlay'
+type Page = 'dashboard' | 'overlay' | 'debug'
 
 let overlayWin: BrowserWindow | null = null
+let dashboardWin: BrowserWindow | null = null
 let debugWin: BrowserWindow | null = null
+let tray: CalmTray | null = null
+let store: SettingsStore | null = null
+
+/** When the app started. The dashboard's event log counts from here. */
+const startedAtWallMs = Date.now()
+/** Set when the app is really quitting, so closing the dashboard is no longer a hide. */
+let quitting = false
 
 /** Debug-only: cycle through DEBUG_CAPTURE_SIZES and log the frame rate of each. */
 const fpsSweep = process.env['CALMFRAME_FPS_SWEEP'] === '1'
 /** Debug-only: show the Phase 0 red tint on the overlay, and run the capture-leak check. */
 const debugTint = process.env['CALMFRAME_DEBUG_TINT'] === '1'
+/** Debug-only: also open the Phase 0 to 4 debug window (capture tools, per-stage latency).
+ *  The FPS sweep needs its moving bar, so the sweep opens it too. */
+const debugWindowOn = process.env['CALMFRAME_DEBUG_WINDOW'] === '1' || fpsSweep
 
 /** The overlay sends its self-tests once at startup, possibly before the debug window has
  *  loaded, so main keeps them and replays them. */
@@ -54,13 +82,20 @@ let gridSelfTest: GridSelfTestResult | null = null
 let smoothSelfTest: SmoothSelfTestResult | null = null
 
 /** Protection on: the overlay is shown and may smooth. Off is the Disabled state ("On fast,
- *  off slow"): hidden until the user re-enables it with the kill switch. */
+ *  off slow"): hidden until the user switches it back on. This is the switch, not the
+ *  status: the status is derived from heartbeats (src/shared/status.ts). Protection starts
+ *  on at every launch. */
 let protectionOn = true
-/** When the latest heartbeat arrived (Date.now()), or null before the first. */
+/** Why protection was last switched off, in words for the status line. Null while on. */
+let offReason: string | null = null
+/** The latest heartbeat, and when it arrived (Date.now()), or null before the first. */
+let lastHeartbeat: Heartbeat | null = null
 let lastHeartbeatAt: number | null = null
 /** Fires WATCHDOG_MS after the latest heartbeat. Armed by the first heartbeat, so a slow
  *  startup (page load, self-tests) can't trip it; the overlay draws nothing before then. */
 let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+/** The status the tray shows, re-derived every STATUS_REFRESH_MS. */
+let trayView: StatusView | null = null
 
 /** Load one of the renderer pages: the Vite dev server in dev, the built file otherwise. */
 function loadPage(win: BrowserWindow, page: Page, hash = ''): void {
@@ -91,6 +126,22 @@ function logSafely(tag: string, build: () => string): void {
 function fmt(v: number | null | undefined, digits: number): string {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '?'
 }
+
+const alive = (win: BrowserWindow | null): win is BrowserWindow =>
+  win !== null && !win.isDestroyed()
+
+/** Send to the windows that show what the overlay is doing: the dashboard and, when it is
+ *  open, the debug window. */
+function sendToUi(channel: string, ...args: unknown[]): void {
+  for (const win of [dashboardWin, debugWin]) {
+    if (alive(win)) win.webContents.send(channel, ...args)
+  }
+}
+
+function sendToDebug(channel: string, ...args: unknown[]): void {
+  if (alive(debugWin)) debugWin.webContents.send(channel, ...args)
+}
+
 let sweepSamples: number[] | null = null
 
 async function runFpsSweep(): Promise<void> {
@@ -170,18 +221,129 @@ function createOverlayWindow(): BrowserWindow {
       `[overlay] shown at ${b.width}x${b.height}+${b.x}+${b.y} (DIP; display ${display.width}x${display.height}), scale ${screen.getPrimaryDisplay().scaleFactor}, content protected: ${win.isContentProtected()}`
     )
     sendOverlayState({ visible: true, reason: 'started' })
+    // The dashboard sits above the overlay (Phase 5), whichever window was ready first.
+    raiseDashboard()
   })
 
   // Fail open: if the overlay renderer dies, hide the overlay.
   win.webContents.on('render-process-gone', (_event, details) => {
-    disableProtection(`overlay renderer gone (${details.reason})`)
+    disableProtection(`The overlay stopped (${details.reason})`)
   })
 
   loadPage(win, 'overlay', debugTint ? 'tint' : '')
   return win
 }
 
-/** Ordinary debug window (becomes the dashboard in Phase 5). */
+/** Where the dashboard goes: where it was left, if that is still on a screen, else the top
+ *  right of the primary display's work area. */
+function dashboardBounds(): Rectangle {
+  const saved = store?.settings.dashboardBounds ?? null
+  if (saved && titleBarOnScreen(saved)) return saved
+  const area = screen.getPrimaryDisplay().workArea
+  const width = Math.min(DASHBOARD_WIDTH, area.width - 2 * DASHBOARD_MARGIN)
+  const height = Math.min(DASHBOARD_HEIGHT, area.height - 2 * DASHBOARD_MARGIN)
+  return {
+    x: area.x + area.width - width - DASHBOARD_MARGIN,
+    y: area.y + DASHBOARD_MARGIN,
+    width,
+    height
+  }
+}
+
+/** Enough of the window's top edge is inside some display's work area to grab it. */
+function titleBarOnScreen(b: Rectangle): boolean {
+  const grab = { width: 100, height: 24 }
+  return screen.getAllDisplays().some(({ workArea: a }) => {
+    const w = Math.min(b.x + b.width, a.x + a.width) - Math.max(b.x, a.x)
+    const h = Math.min(b.y + grab.height, a.y + a.height) - Math.max(b.y, a.y)
+    return w >= grab.width && h >= grab.height
+  })
+}
+
+/**
+ * The dashboard (Phase 5). Above the overlay and excluded from capture, so it stays sharp
+ * and live while the rest of the screen is smoothed, and neither the detector nor its own
+ * protected preview sees it. Closing it hides it to the tray; Quit is in the tray menu.
+ */
+function createDashboardWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    ...dashboardBounds(),
+    minWidth: DASHBOARD_MIN_WIDTH,
+    minHeight: DASHBOARD_MIN_HEIGHT,
+    show: false,
+    title: 'CalmFrame',
+    autoHideMenuBar: true,
+    backgroundColor: '#14181d',
+    alwaysOnTop: true,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: preloadPath,
+      sandbox: false
+    }
+  })
+  win.setContentProtection(true)
+
+  win.once('ready-to-show', () => {
+    win.show()
+    raiseDashboard()
+    const b = win.getBounds()
+    console.log(
+      `[dashboard] shown at ${b.width}x${b.height}+${b.x}+${b.y} (DIP), above the overlay: ${win.isAlwaysOnTop()}, content protected: ${win.isContentProtected()}`
+    )
+  })
+  // Applied again whenever it is shown, as for the overlay.
+  win.on('show', () => win.setContentProtection(true))
+  win.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    win.hide()
+    console.log('[dashboard] hidden to the tray')
+  })
+  win.on('closed', () => {
+    dashboardWin = null
+  })
+  // 'move' and 'resize' rather than 'moved' and 'resized', which Windows only sends at the
+  // end of a drag with the mouse, not for snapping with Win+arrow keys. The store writes
+  // the file once, a moment after the last change.
+  const saveBounds = (): void => {
+    if (!win.isMinimized()) store?.update({ dashboardBounds: win.getBounds() })
+  }
+  win.on('move', saveBounds)
+  win.on('resize', saveBounds)
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[dashboard] renderer gone (${details.reason}), reloading`)
+    if (!win.isDestroyed()) loadPage(win, 'dashboard')
+  })
+  win.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  loadPage(win, 'dashboard')
+  return win
+}
+
+/** Put the dashboard above the overlay: always on top at the overlay's level, set after
+ *  the overlay's, which puts it higher in that band. */
+function raiseDashboard(): void {
+  if (!alive(dashboardWin) || !dashboardWin.isVisible()) return
+  dashboardWin.setAlwaysOnTop(true, 'screen-saver')
+  dashboardWin.moveTop()
+}
+
+function showDashboard(): void {
+  if (!alive(dashboardWin)) {
+    dashboardWin = createDashboardWindow()
+    return
+  }
+  if (dashboardWin.isMinimized()) dashboardWin.restore()
+  dashboardWin.show()
+  dashboardWin.focus()
+  raiseDashboard()
+}
+
+/** The Phase 0 to 4 debug window, only with CALMFRAME_DEBUG_WINDOW=1 or the FPS sweep. */
 function createDebugWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 600,
@@ -202,7 +364,6 @@ function createDebugWindow(): BrowserWindow {
   })
   win.on('closed', () => {
     debugWin = null
-    app.quit()
   })
 
   win.webContents.setWindowOpenHandler((details) => {
@@ -210,24 +371,59 @@ function createDebugWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  loadPage(win, 'dashboard', fpsSweep ? 'sweep' : '')
+  loadPage(win, 'debug', fpsSweep ? 'sweep' : '')
   return win
 }
 
 function sendOverlayState(state: OverlayState): void {
-  debugWin?.webContents.send(IPC.overlayState, state)
+  sendToDebug(IPC.overlayState, state)
+}
+
+// ---------------------------------------------------------------------------
+// Status: derived from the heartbeat (src/shared/status.ts)
+// ---------------------------------------------------------------------------
+
+/** The latest heartbeat with main's own view of the overlay, or null before the first. */
+function currentBeat(): StatusBeat | null {
+  if (lastHeartbeat === null || lastHeartbeatAt === null) return null
+  return {
+    ...lastHeartbeat,
+    overlayVisible: alive(overlayWin) && overlayWin.isVisible(),
+    offReason,
+    ageMs: Date.now() - lastHeartbeatAt
+  }
+}
+
+/** Send the latest heartbeat to the dashboard now, and update the tray. */
+function pushStatus(): void {
+  const beat = currentBeat()
+  if (beat) sendToUi(IPC.statusBeat, beat)
+  refreshStatus()
+}
+
+/** Re-derive the status for the tray. Silence is what turns it off, so this runs on a
+ *  timer as well as on each heartbeat. */
+function refreshStatus(): void {
+  const beat = currentBeat()
+  const view = deriveStatus(beat, beat === null ? Infinity : beat.ageMs)
+  if (trayView === null || trayView.status !== view.status) {
+    console.log(`[status] ${STATUS_LABEL[view.status]}: ${view.detail}`)
+  }
+  trayView = view
+  tray?.update(view)
 }
 
 function hideOverlay(reason: string): void {
-  if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) overlayWin.hide()
+  if (alive(overlayWin) && overlayWin.isVisible()) overlayWin.hide()
   console.log(`[overlay] hidden: ${reason}`)
   sendOverlayState({ visible: false, reason })
 }
 
 function showOverlay(reason: string): void {
-  if (!overlayWin || overlayWin.isDestroyed()) return
+  if (!alive(overlayWin)) return
   overlayWin.showInactive()
   overlayWin.setAlwaysOnTop(true, 'screen-saver')
+  raiseDashboard()
   console.log(`[overlay] shown: ${reason}`)
   sendOverlayState({ visible: true, reason })
 }
@@ -235,42 +431,62 @@ function showOverlay(reason: string): void {
 /**
  * Fail open, or the user's off switch: hide the overlay at once, then tell the renderer to
  * go to Disabled. A frozen renderer gets the message when it recovers, and stays hidden
- * until the user re-enables protection.
+ * until the user switches protection back on.
+ * @param reason in words, for the status line ("Switched off from the dashboard")
  */
 function disableProtection(reason: string): void {
   protectionOn = false
+  offReason = reason
   hideOverlay(`Protection off: ${reason}`)
-  if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.webContents.send(IPC.protection, false, reason)
-  }
+  if (alive(overlayWin)) overlayWin.webContents.send(IPC.protection, false, reason)
+  pushStatus()
 }
 
-/** The user's on switch. Refused while the renderer is not sending heartbeats, since a
- *  frozen overlay must not be shown again. */
-function enableProtection(reason: string): void {
+/**
+ * The user's on switch. Refused while the renderer is not sending heartbeats, since a
+ * frozen overlay must not be shown again, and when detection has failed, since there is
+ * nothing to switch on.
+ * @returns whether protection was switched on
+ */
+function enableProtection(reason: string): boolean {
   if (lastHeartbeatAt === null || Date.now() - lastHeartbeatAt > WATCHDOG_MS) {
     console.log('[protection] not switched back on: the overlay renderer is not responding')
     sendOverlayState({ visible: false, reason: 'Protection off: overlay not responding' })
-    return
+    return false
+  }
+  if (lastHeartbeat?.state === 'off') {
+    console.log('[protection] not switched back on: detection failed, restart CalmFrame')
+    return false
   }
   protectionOn = true
-  if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.webContents.send(IPC.protection, true, reason)
-  }
+  offReason = null
+  if (alive(overlayWin)) overlayWin.webContents.send(IPC.protection, true, reason)
   showOverlay(reason)
+  return true
+}
+
+function setProtection(enabled: boolean, where: 'dashboard' | 'tray menu'): boolean {
+  if (enabled) return enableProtection(where)
+  disableProtection(`Switched off from the ${where}`)
+  return true
 }
 
 /** Watchdog ("Safety mechanisms"): no heartbeat for WATCHDOG_MS hides the overlay and sets
  *  Disabled, because a frozen opaque overlay would block the whole screen. */
-function onHeartbeat(): void {
+function onHeartbeat(heartbeat: Heartbeat): void {
+  lastHeartbeat = heartbeat
   lastHeartbeatAt = Date.now()
   if (watchdogTimer !== null) clearTimeout(watchdogTimer)
   watchdogTimer = setTimeout(() => {
     watchdogTimer = null
     const silent = lastHeartbeatAt === null ? 'unknown' : String(Date.now() - lastHeartbeatAt)
-    if (protectionOn) disableProtection(`watchdog, no heartbeat for ${silent} ms`)
-    else console.log(`[watchdog] no heartbeat for ${silent} ms (protection already off)`)
+    if (protectionOn) {
+      disableProtection(`The overlay stopped responding (no heartbeat for ${silent} ms)`)
+    } else {
+      console.log(`[watchdog] no heartbeat for ${silent} ms (protection already off)`)
+    }
   }, WATCHDOG_MS)
+  pushStatus()
 }
 
 /** Grant the primary screen to getDisplayMedia (spec: "Capture requirements"). */
@@ -295,11 +511,41 @@ function installDisplayMediaHandler(): void {
   })
 }
 
+/** Tell every renderer the settings now in force: the overlay applies the detector
+ *  options, the dashboard and debug window show them. */
+function broadcastSettings(settings: Settings): void {
+  for (const win of [overlayWin, dashboardWin, debugWin]) {
+    if (alive(win)) win.webContents.send(IPC.settings, settings)
+  }
+}
+
 function installIpc(): void {
+  ipcMain.handle(IPC.getInit, (): InitInfo => ({
+    settings: (store as SettingsStore).settings,
+    startedAtWallMs
+  }))
+
+  ipcMain.on(IPC.updateSettings, (_event, patch: unknown) => {
+    if (!store) return
+    const before = store.settings
+    const after = store.update(patch)
+    if (after === before) return
+    logSafely(
+      'settings',
+      () =>
+        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}`
+    )
+    broadcastSettings(after)
+  })
+
+  ipcMain.handle(IPC.setProtection, (_event, enabled: unknown) =>
+    typeof enabled === 'boolean' ? setProtection(enabled, 'dashboard') : false
+  )
+
   let lastLog = 0
   let lastSettings = ''
   ipcMain.on(IPC.captureStats, (_event, stats: CaptureStats) => {
-    debugWin?.webContents.send(IPC.captureStats, stats)
+    sendToUi(IPC.captureStats, stats)
     sweepSamples?.push(stats.fps)
     const settings = JSON.stringify(stats.settings)
     if (settings !== lastSettings) {
@@ -321,19 +567,19 @@ function installIpc(): void {
 
   ipcMain.on(IPC.captureError, (_event, message: string) => {
     console.error(`[capture] error: ${message}`)
-    disableProtection(`capture error: ${message}`)
+    disableProtection(`Screen capture failed: ${message}`)
   })
 
   ipcMain.on(IPC.pipelineError, (_event, message: string) => {
     console.error(`[pipeline] error: ${message}`)
-    disableProtection(`pipeline error: ${message}`)
+    disableProtection(`Detection failed: ${message}`)
   })
 
-  ipcMain.on(IPC.heartbeat, () => onHeartbeat())
+  ipcMain.on(IPC.heartbeat, (_event, heartbeat: Heartbeat) => onHeartbeat(heartbeat))
 
   ipcMain.on(IPC.smoothSelfTest, (_event, result: SmoothSelfTestResult) => {
     smoothSelfTest = result
-    debugWin?.webContents.send(IPC.smoothSelfTest, result)
+    sendToDebug(IPC.smoothSelfTest, result)
     logSafely(
       'smooth self-test',
       () => `[smooth self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
@@ -341,7 +587,7 @@ function installIpc(): void {
   })
 
   ipcMain.on(IPC.stateChange, (_event, change: StateChange) => {
-    debugWin?.webContents.send(IPC.stateChange, change)
+    sendToDebug(IPC.stateChange, change)
     logSafely('state', () => {
       const when = new Date(change.wallMs).toISOString().slice(11, 23)
       const why =
@@ -355,7 +601,7 @@ function installIpc(): void {
 
   ipcMain.on(IPC.gridSelfTest, (_event, result: GridSelfTestResult) => {
     gridSelfTest = result
-    debugWin?.webContents.send(IPC.gridSelfTest, result)
+    sendToDebug(IPC.gridSelfTest, result)
     logSafely(
       'grid self-test',
       () => `[grid self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
@@ -364,7 +610,7 @@ function installIpc(): void {
 
   let lastDetectLog = 0
   ipcMain.on(IPC.detectionStats, (_event, stats: DetectionStats) => {
-    debugWin?.webContents.send(IPC.detectionStats, stats)
+    sendToUi(IPC.detectionStats, stats)
     const now = Date.now()
     if (now - lastDetectLog < DEBUG_LOG_INTERVAL_MS) return
     lastDetectLog = now
@@ -394,8 +640,24 @@ function installIpc(): void {
     )
   })
 
+  // The thumbnails only go to the dashboard, and only while someone can see it.
+  ipcMain.on(IPC.thumbnails, (_event, thumbnails: Thumbnails) => {
+    if (alive(dashboardWin) && dashboardWin.isVisible() && !dashboardWin.isMinimized()) {
+      dashboardWin.webContents.send(IPC.thumbnails, thumbnails)
+    }
+  })
+
+  ipcMain.on(IPC.flashEvent, (_event, event: FlashEventMessage) => {
+    sendToUi(IPC.flashEvent, event)
+    logSafely(
+      'event',
+      () =>
+        `[event] #${event.id} ${event.kind}: ${flashEventText(event, startedAtWallMs)} (${event.type})`
+    )
+  })
+
   ipcMain.on(IPC.hazardEvent, (_event, event: HazardEvent) => {
-    debugWin?.webContents.send(IPC.hazardEvent, event)
+    sendToDebug(IPC.hazardEvent, event)
     logSafely('hazard', () => {
       const when = new Date(event.wallMs).toISOString().slice(11, 23)
       const values = `${event.type}, ${fmt(event.frequencyHz, 1)} Hz, dL ${fmt(event.flashSize, 2)}, area ${fmt(event.areaFraction, 2)}, graph ${fmt(event.graphValue, 1)}`
@@ -415,7 +677,7 @@ function installIpc(): void {
   })
 
   ipcMain.on(IPC.selfCheckResult, (_event, result: SelfCheckResult) => {
-    debugWin?.webContents.send(IPC.selfCheckResult, result)
+    sendToDebug(IPC.selfCheckResult, result)
     logSafely('self-check', () => `[self-check] ${result.verdict.toUpperCase()}: ${result.detail}`)
     result.cycles.forEach((c, i) => {
       logSafely(
@@ -426,18 +688,10 @@ function installIpc(): void {
     })
   })
 
-  // The fallback switch for the concurrency rule (Step 5a): 'off' is the detector as it
-  // was before the rule.
-  ipcMain.on(IPC.concurrencyRule, (_event, rule: ConcurrencyRule) => {
-    if (rule !== 'one-way' && rule !== 'off') return
-    console.log(`[detector] concurrency rule: ${rule}`)
-    overlayWin?.webContents.send(IPC.concurrencyRule, rule)
-  })
-
-  // Stacking test for the open question in CLAUDE.md: debug window above the overlay,
-  // and excluded from capture so it doesn't appear in its own preview.
+  // The debug window's stacking test: above the overlay, and excluded from capture so it
+  // doesn't appear in its own preview. The dashboard does this always.
   ipcMain.on(IPC.debugSetOnTop, (_event, onTop: boolean) => {
-    if (!debugWin) return
+    if (!alive(debugWin)) return
     debugWin.setContentProtection(onTop)
     debugWin.setAlwaysOnTop(onTop, 'screen-saver')
     if (onTop) debugWin.moveTop()
@@ -445,7 +699,7 @@ function installIpc(): void {
   })
 }
 
-app.whenReady().then(() => {
+function start(): void {
   electronApp.setAppUserModelId('com.calmframe.app')
 
   // F12 opens DevTools in dev; Ctrl+R reload is disabled in production.
@@ -453,15 +707,31 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  store = new SettingsStore(join(app.getPath('userData'), SETTINGS_FILE_NAME))
   installDisplayMediaHandler()
   installIpc()
 
-  debugWin = createDebugWindow()
+  // The overlay first, then the dashboard, which is raised above it.
   overlayWin = createOverlayWindow()
+  dashboardWin = createDashboardWindow()
+  if (debugWindowOn) debugWin = createDebugWindow()
+
+  tray = new CalmTray({
+    setProtection: (enabled) => {
+      if (!setProtection(enabled, 'tray menu')) tray?.refresh()
+    },
+    showDashboard,
+    quit: () => {
+      quitting = true
+      app.quit()
+    }
+  })
+  refreshStatus()
+  setInterval(refreshStatus, STATUS_REFRESH_MS)
 
   // Kill switch ("Safety mechanisms"): to Disabled and hidden at once, and back on.
   const registered = globalShortcut.register(KILL_SWITCH_ACCELERATOR, () => {
-    if (protectionOn) disableProtection('kill switch')
+    if (protectionOn) disableProtection(`Switched off with ${KILL_SWITCH_LABEL}`)
     else enableProtection('kill switch')
   })
   console.log(`[kill switch] ${KILL_SWITCH_ACCELERATOR} registered: ${registered}`)
@@ -476,13 +746,32 @@ app.whenReady().then(() => {
   }
 
   if (fpsSweep) void runFpsSweep()
+}
+
+// One CalmFrame at a time. A second copy would capture the screen alongside the first
+// (Phase 5 found two dev instances running, at about 33 fps instead of 40 to 45) and could
+// not register the kill switch. Launching it again shows the running one's dashboard.
+if (!app.requestSingleInstanceLock()) {
+  console.log('[app] CalmFrame is already running; showing its dashboard instead')
+  app.quit()
+} else {
+  app.on('second-instance', () => showDashboard())
+  app.whenReady().then(start)
+}
+
+app.on('before-quit', () => {
+  quitting = true
 })
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  store?.flush()
+  tray?.destroy()
+  tray = null
 })
 
-// Windows is the only target, so quit when the last window closes.
+// Windows is the only target, so quit when the last window closes. Closing the dashboard
+// only hides it, so this is reached when quitting from the tray.
 app.on('window-all-closed', () => {
   app.quit()
 })

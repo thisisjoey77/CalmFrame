@@ -4,8 +4,10 @@
  */
 
 import type { HazardType } from '../core/detector'
-import type { ConcurrencyRule } from './config'
+import type { FlashEvent } from '../core/events'
 import type { OverlayStateName } from '../core/stateMachine'
+import type { ConcurrencyRule } from './config'
+import type { Settings } from './settings'
 
 export const IPC = {
   /** overlay -> main -> debug: capture stats, every STATS_EVERY_N_FRAMES frames. */
@@ -40,9 +42,47 @@ export const IPC = {
   protection: 'protection',
   /** main -> overlay: debug only, block the renderer's main thread for this many ms. */
   debugFreeze: 'debug-freeze',
-  /** debug -> main -> overlay: switch the detector's concurrency rule (Step 5a). */
-  concurrencyRule: 'concurrency-rule'
+  /** dashboard or debug -> main: change some settings (a partial Settings, validated in
+   *  main). Main saves them and sends the result on `settings`. */
+  updateSettings: 'update-settings',
+  /** main -> every renderer: the settings now in force. The overlay applies the detector
+   *  options; the dashboard and debug windows show them. */
+  settings: 'settings',
+  /** any renderer -> main, invoke: the settings and the app's start time (InitInfo). */
+  getInit: 'get-init',
+  /** dashboard -> main, invoke: switch protection on or off. Resolves false if main refused
+   *  (the overlay is not responding, so it must not be shown again). */
+  setProtection: 'set-protection',
+  /** main -> dashboard and debug: each heartbeat with main's view of the overlay
+   *  (StatusBeat). The status is derived from these. */
+  statusBeat: 'status-beat',
+  /** overlay -> main -> dashboard: the thumbnails, every STATS_EVERY_N_FRAMES frames. */
+  thumbnails: 'thumbnails',
+  /** overlay -> main -> dashboard: a flash event started or ended. */
+  flashEvent: 'flash-event'
 } as const
+
+/** What a renderer asks main for when it loads. */
+export interface InitInfo {
+  settings: Settings
+  /** When the app started, wall-clock ms since the epoch. The event log counts from it. */
+  startedAtWallMs: number
+}
+
+/** The dashboard's two thumbnails (Phase 5), each the 96x54 grid as sRGB RGBA8, row 0 at
+ *  the top. 20 KB each: the only picture data that crosses IPC, never a frame. */
+export interface Thumbnails {
+  /** What the detector sees: the screen under the overlay. */
+  raw: Uint8Array
+  /** What the viewer sees (the viewer check's grid) while the overlay is drawn, else null. */
+  seen: Uint8Array | null
+}
+
+/** A flash event as the overlay reports it, with the wall-clock time it started. */
+export interface FlashEventMessage extends FlashEvent {
+  /** startT as wall-clock ms since the epoch. */
+  startWallMs: number
+}
 
 export interface CaptureSize {
   maxWidth: number
@@ -65,6 +105,9 @@ export interface CaptureStats {
   framesTotal: number
   /** What the browser reports it actually applied. */
   settings: { frameRate?: number; width?: number; height?: number; cursor?: string }
+  /** How long this capture has been open. fps counts over a rolling second, so readings
+   *  from the first second are partial. */
+  runningMs: number
 }
 
 export interface ColorSample {
@@ -130,6 +173,9 @@ export interface StatusBeat extends Heartbeat {
   overlayVisible: boolean
   /** Why main last switched protection off, for the status line. Null while it is on. */
   offReason: string | null
+  /** How old the heartbeat already was when main sent this. Main also re-sends the latest
+   *  heartbeat when it switches protection off, and that one must not look fresh. */
+  ageMs: number
 }
 
 /** The overlay state machine changed state ("On fast, off slow"). */
@@ -271,14 +317,23 @@ export interface CalmFrameApi {
   sendSmoothSelfTest(result: SmoothSelfTestResult): void
   sendHeartbeat(heartbeat: Heartbeat): void
   sendStateChange(change: StateChange): void
+  sendThumbnails(thumbnails: Thumbnails): void
+  sendFlashEvent(event: FlashEventMessage): void
   onProtection(callback: (enabled: boolean, reason: string) => void): void
   onDebugFreeze(callback: (ms: number) => void): void
-  onConcurrencyRule(callback: (rule: ConcurrencyRule) => void): void
+  // every renderer
+  getInit(): Promise<InitInfo>
+  onSettings(callback: (settings: Settings) => void): void
+  // dashboard and debug window
+  updateSettings(patch: Partial<Settings>): void
+  setProtection(enabled: boolean): Promise<boolean>
+  onStatusBeat(callback: (beat: StatusBeat) => void): void
+  onThumbnails(callback: (thumbnails: Thumbnails) => void): void
+  onFlashEvent(callback: (event: FlashEventMessage) => void): void
   // debug window
   runSelfCheck(): void
   restartCapture(size: CaptureSize): void
   setDebugOnTop(onTop: boolean): void
-  setConcurrencyRule(rule: ConcurrencyRule): void
   onCaptureStats(callback: (stats: CaptureStats) => void): void
   onSelfCheckResult(callback: (result: SelfCheckResult) => void): void
   onOverlayState(callback: (state: OverlayState) => void): void

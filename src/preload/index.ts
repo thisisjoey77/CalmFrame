@@ -19,19 +19,32 @@ const api: CalmFrameApi = {
   sendSmoothSelfTest: (result) => ipcRenderer.send(IPC.smoothSelfTest, result),
   sendHeartbeat: (heartbeat) => ipcRenderer.send(IPC.heartbeat, heartbeat),
   sendStateChange: (change) => ipcRenderer.send(IPC.stateChange, change),
+  sendThumbnails: (thumbnails) => ipcRenderer.send(IPC.thumbnails, thumbnails),
+  sendFlashEvent: (event) => ipcRenderer.send(IPC.flashEvent, event),
   onProtection: (callback) => {
     ipcRenderer.on(IPC.protection, (_event, enabled, reason) => callback(enabled, reason))
   },
   onDebugFreeze: (callback) => {
     ipcRenderer.on(IPC.debugFreeze, (_event, ms) => callback(ms))
   },
-  onConcurrencyRule: (callback) => {
-    ipcRenderer.on(IPC.concurrencyRule, (_event, rule) => callback(rule))
+  getInit: () => ipcRenderer.invoke(IPC.getInit),
+  onSettings: (callback) => {
+    ipcRenderer.on(IPC.settings, (_event, settings) => callback(settings))
+  },
+  updateSettings: (patch) => ipcRenderer.send(IPC.updateSettings, patch),
+  setProtection: (enabled) => ipcRenderer.invoke(IPC.setProtection, enabled),
+  onStatusBeat: (callback) => {
+    ipcRenderer.on(IPC.statusBeat, (_event, beat) => callback(beat))
+  },
+  onThumbnails: (callback) => {
+    ipcRenderer.on(IPC.thumbnails, (_event, thumbnails) => callback(thumbnails))
+  },
+  onFlashEvent: (callback) => {
+    ipcRenderer.on(IPC.flashEvent, (_event, event) => callback(event))
   },
   runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
   restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
   setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),
-  setConcurrencyRule: (rule) => ipcRenderer.send(IPC.concurrencyRule, rule),
   onCaptureStats: (callback) => {
     ipcRenderer.on(IPC.captureStats, (_event, stats) => callback(stats))
   },

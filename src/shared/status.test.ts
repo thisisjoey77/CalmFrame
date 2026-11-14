@@ -9,7 +9,8 @@ const healthy: StatusBeat = {
   frameAgeMs: 20,
   captureLive: true,
   overlayVisible: true,
-  offReason: null
+  offReason: null,
+  ageMs: 0
 }
 const beat = (patch: Partial<StatusBeat>): StatusBeat => ({ ...healthy, ...patch })
 

@@ -20,28 +20,42 @@
  * grid ready -> decision -> overlay drawn. The grid wait is kept separately for frames
  * analysed while the overlay was drawn, so the cost of drawing to detection is visible.
  *
- * Runs in the overlay renderer. Only stats every few frames, hazard events and state
- * changes leave this module. Frames never cross IPC.
+ * Runs in the overlay renderer. Only stats and the 96x54 thumbnails every few frames,
+ * hazard and flash events, and state changes leave this module. Frames never cross IPC.
  */
 
 import {
   ALPHA_WARM,
   ANALYSIS_STATS_WINDOW,
   DEFAULT_CONCURRENCY_RULE,
+  GRID_CELLS,
   HOLD_MS,
-  RED_DESATURATION,
-  type ConcurrencyRule
+  RED_DESATURATION
 } from '../shared/config'
-import type { DetectionStats, HazardEvent, StateChange, Timing } from '../shared/messages'
+import type {
+  DetectionStats,
+  FlashEventMessage,
+  HazardEvent,
+  StateChange,
+  Thumbnails,
+  Timing
+} from '../shared/messages'
+import type { detectorOptionsFor } from '../shared/settings'
 import { Detector, type DetectorResult, type HazardType } from '../core/detector'
+import { FlashEventTracker, type FlashEvent } from '../core/events'
 import { OverlayStateMachine, type OverlayStateName, type StateOutput } from '../core/stateMachine'
+import { encodeGridRgba8 } from '../core/thumbnail'
 import { ViewerCheck, type ViewerCheckResult } from '../core/viewerCheck'
 import type { GridPass, GridReadback } from './gridPass'
 import type { SmoothPass } from './smoothPass'
 import { SampleRing } from './stats'
 
+/** The detector options the user's settings choose: trigger, N and the concurrency rule. */
+export type DetectorSettings = ReturnType<typeof detectorOptionsFor>
+
 export interface AnalysisSink {
   hazardEvent(event: HazardEvent): void
+  flashEvent(event: FlashEventMessage): void
   stateChange(change: StateChange): void
   /** Analysis failed outside a frame callback. The caller fails open. */
   failed(error: unknown): void
@@ -60,12 +74,17 @@ function reasonFor(from: OverlayStateName, to: OverlayStateName): string {
 }
 
 export class LiveAnalysis {
-  /** Step 5a. The debug window can switch it off, which is the detector as it was before. */
-  private concurrency: ConcurrencyRule = DEFAULT_CONCURRENCY_RULE
+  /** The sensitivity slider and the Step 5a switch ("Ignore movement"; off is the detector
+   *  as it was before the rule). */
+  private options: DetectorSettings
   // The GPU reads back RGBA, so the detector and the viewer check take four values per cell.
-  private detector = this.makeDetector()
+  private detector: Detector
   private machine = new OverlayStateMachine()
   private readonly viewer = new ViewerCheck(4)
+  private readonly events = new FlashEventTracker()
+  // Thumbnails for the dashboard, encoded when stats are sent.
+  private readonly rawThumb = new Uint8Array(GRID_CELLS * 4)
+  private readonly seenThumb = new Uint8Array(GRID_CELLS * 4)
   private captureFps = 0
   private stopped = false
   private pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -156,8 +175,12 @@ export class LiveAnalysis {
   constructor(
     private readonly pass: GridPass,
     private readonly smooth: SmoothPass,
-    private readonly sink: AnalysisSink
-  ) {}
+    private readonly sink: AnalysisSink,
+    options: DetectorSettings
+  ) {
+    this.options = { ...options }
+    this.detector = this.makeDetector()
+  }
 
   /** The state machine's state, for the heartbeat. */
   get state(): OverlayStateName {
@@ -223,18 +246,36 @@ export class LiveAnalysis {
   }
 
   /**
-   * Switch the concurrency rule (Step 5a). The detector starts again with no history, so a
-   * hazard in progress ends and has to be found again under the new rule. The state
-   * machine carries on, with its usual hold and fade.
+   * Apply the user's detector settings: the sensitivity slider's trigger and N, and the
+   * concurrency rule (Step 5a). If they changed, the detector starts again with no
+   * history, so a hazard in progress ends and has to be found again under the new
+   * settings. The state machine carries on with its usual hold and fade, which outlasts
+   * the time a running strobe needs to trigger again.
    */
-  setConcurrency(rule: ConcurrencyRule): void {
-    if (rule === this.concurrency) return
-    this.concurrency = rule
+  configure(options: DetectorSettings): void {
+    const o = this.options
+    if (
+      options.trigger === o.trigger &&
+      options.streakN === o.streakN &&
+      options.concurrency === o.concurrency
+    ) {
+      return
+    }
+    this.options = { ...options }
     this.detector = this.makeDetector()
   }
 
   private makeDetector(): Detector {
-    return new Detector({ inputChannels: 4, concurrency: this.concurrency })
+    return new Detector({ inputChannels: 4, ...this.options })
+  }
+
+  /** The dashboard's thumbnails from the latest analysed frame: the grid the detector saw
+   *  and, while the overlay is drawn, the grid the viewer saw. */
+  thumbnails(): Thumbnails {
+    encodeGridRgba8(this.pass.grid, 4, this.rawThumb)
+    if (!this.viewerChecking) return { raw: this.rawThumb, seen: null }
+    encodeGridRgba8(this.viewer.seenGrid, 3, this.seenThumb)
+    return { raw: this.rawThumb, seen: this.seenThumb }
   }
 
   /** Stop for good (fail open): drop GPU work in flight, stop polling and leave the
@@ -261,7 +302,7 @@ export class LiveAnalysis {
       flashSize: d?.flashSize ?? 0,
       areaFraction: d?.areaFraction ?? 0,
       hotCells: d?.hotCells ?? 0,
-      concurrency: this.concurrency,
+      concurrency: this.options.concurrency ?? DEFAULT_CONCURRENCY_RULE,
       ignoredReversals: this.periodIgnored,
       state: this.machine.state,
       smoothing: {
@@ -324,6 +365,8 @@ export class LiveAnalysis {
       this.drawn = false
     }
     if (this.hazardOn) this.endHazard(this.lastT)
+    const open = this.events.flush()
+    if (open) this.sendFlashEvent(open)
     this.detector = this.makeDetector()
     this.machine = new OverlayStateMachine()
     if (!this.enabled) this.machine.disable()
@@ -394,6 +437,18 @@ export class LiveAnalysis {
     if (d.hazard) this.periodHazard = true
     this.periodIgnored += d.ignoredReversals
     this.trackHazard(d, info.tMs)
+    const event = this.events.step(
+      info.tMs,
+      d.hazard,
+      d.type,
+      d.frequencyHz,
+      this.enabled && out.opacity > 0
+    )
+    if (event) this.sendFlashEvent(event)
+  }
+
+  private sendFlashEvent(e: FlashEvent): void {
+    this.sink.flashEvent({ ...e, startWallMs: performance.timeOrigin + e.startT })
   }
 
   /**

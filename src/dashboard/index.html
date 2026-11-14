@@ -2,313 +2,419 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>CalmFrame debug</title>
+    <title>CalmFrame</title>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
     <style>
+      /* Calm on purpose (Phase 5): dark, muted, high-contrast text, no transitions or
+         animation anywhere except the graph's scrolling. Status colours are close in
+         brightness, and none is a saturated red, so a status change is never a flash. */
       :root {
-        color-scheme: light dark;
+        color-scheme: dark;
+        --bg: #14181d;
+        --panel: #1c2128;
+        --border: #30363d;
+        --text: #f0f3f6;
+        --muted: #c3cad2;
+        --protected: #3fb950;
+        --smoothing: #58a6ff;
+        --off: #d29922;
+        --warn-bg: #3a2c0b;
+        --warn-text: #f2d17c;
+        --focus: #f0f3f6;
         font-family: 'Segoe UI', system-ui, sans-serif;
-        font-size: 14px;
+        font-size: 15px;
+        line-height: 1.4;
       }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        transition: none !important;
+        animation: none !important;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      html,
       body {
         margin: 0;
-        padding: 12px 16px;
-        background: Canvas;
-        color: CanvasText;
+        background: var(--bg);
+        color: var(--text);
       }
-      h1 {
-        font-size: 16px;
-        margin: 0 0 8px;
+      main {
+        padding: 14px 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
       }
       h2 {
         font-size: 13px;
-        margin: 14px 0 6px;
-        text-transform: uppercase;
+        font-weight: 600;
         letter-spacing: 0.04em;
-        opacity: 0.7;
-      }
-      video {
-        width: 100%;
-        max-width: 480px;
-        background: #000;
-        display: block;
-      }
-      table {
-        border-collapse: collapse;
-      }
-      td {
-        padding: 2px 12px 2px 0;
-        vertical-align: top;
-      }
-      td:first-child {
-        opacity: 0.75;
-      }
-      .ok {
-        color: #1a7f37;
-        font-weight: 600;
-      }
-      .bad {
-        color: #c62828;
-        font-weight: 600;
-      }
-      .warn {
-        color: #b26a00;
-        font-weight: 600;
-      }
-      button {
-        font: inherit;
-        padding: 4px 10px;
-      }
-      label {
-        display: block;
-        margin: 4px 0;
-      }
-      #selfcheck-detail {
-        margin-top: 4px;
-        font-size: 12px;
-        opacity: 0.85;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 6px;
       }
       .hint {
-        font-size: 12px;
-        opacity: 0.7;
+        font-size: 13px;
+        color: var(--muted);
+        margin: 6px 0 0;
       }
+      :focus-visible {
+        outline: 3px solid var(--focus);
+        outline-offset: 3px;
+      }
+
+      /* The one large status indicator. */
+      #status {
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        grid-template-rows: auto auto auto;
+        column-gap: 14px;
+        align-items: center;
+        padding: 14px;
+        background: var(--panel);
+        border: 2px solid var(--status-color);
+        border-radius: 12px;
+      }
+      #status.protected {
+        --status-color: var(--protected);
+      }
+      #status.smoothing {
+        --status-color: var(--smoothing);
+      }
+      #status.off {
+        --status-color: var(--off);
+      }
+      #status-mark {
+        grid-row: 1 / 3;
+        width: 64px;
+        height: 64px;
+        color: var(--status-color);
+      }
+      #status-mark .shape {
+        display: none;
+      }
+      #status.protected #status-mark .protected,
+      #status.smoothing #status-mark .smoothing,
+      #status.off #status-mark .off {
+        display: inline;
+      }
+      #status-word {
+        font-size: 32px;
+        font-weight: 700;
+        line-height: 1.1;
+        margin: 0;
+        align-self: end;
+      }
+      #status-detail {
+        margin: 2px 0 0;
+        color: var(--muted);
+        align-self: start;
+      }
+      #protection {
+        grid-column: 1 / 3;
+        margin-top: 12px;
+        justify-self: start;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font: inherit;
+        font-weight: 600;
+        color: var(--text);
+        background: transparent;
+        border: 2px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 14px 6px 6px;
+        cursor: pointer;
+      }
+      #protection .track {
+        width: 44px;
+        height: 24px;
+        border-radius: 999px;
+        background: #3b434c;
+        position: relative;
+      }
+      #protection .knob {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--text);
+      }
+      #protection[aria-checked='true'] .track {
+        background: var(--protected);
+      }
+      #protection[aria-checked='true'] .knob {
+        left: 23px;
+      }
+
+      #fps-warning {
+        margin: 0;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--warn-bg);
+        color: var(--warn-text);
+        font-size: 14px;
+      }
+
       #graph {
         width: 100%;
-        max-width: 560px;
-        height: 150px;
+        height: 132px;
+        display: block;
+        border-radius: 6px;
+      }
+
+      .thumbs {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      figure {
+        margin: 0;
+      }
+      figure canvas {
+        display: block;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+      }
+      figcaption {
+        font-size: 13px;
+        font-weight: 600;
+        margin-top: 4px;
+      }
+      figcaption .sub {
+        display: block;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .preview-box {
+        position: relative;
+      }
+      #preview-idle {
+        position: absolute;
+        inset: 1px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .control {
+        padding: 12px 14px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+      .control label.title {
+        font-weight: 600;
         display: block;
       }
-      #hazard-log {
+      #sensitivity {
+        width: 100%;
+        margin: 10px 0 2px;
+        accent-color: var(--smoothing);
+      }
+      .scale {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #sensitivity-name {
+        font-weight: 600;
+        margin: 8px 0 0;
+      }
+      #sensitivity-desc {
+        margin: 2px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .check {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .check input {
+        width: 20px;
+        height: 20px;
+        margin: 1px 0 0;
+        accent-color: var(--smoothing);
+        flex: none;
+      }
+
+      .events-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #counter {
+        font-size: 15px;
+        color: var(--text);
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      #counter strong {
+        font-size: 22px;
+      }
+      #events {
         margin: 0;
-        padding: 0;
+        padding: 6px 10px;
         list-style: none;
         font-family: Consolas, 'Cascadia Mono', monospace;
-        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
         max-height: 150px;
         overflow-y: auto;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
       }
-      #hazard-log li {
-        padding: 1px 0;
-        white-space: pre;
+      #events li {
+        padding: 2px 0;
       }
-      .numbers td:nth-child(2) {
-        font-variant-numeric: tabular-nums;
+      #events li.empty {
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: var(--muted);
+      }
+      footer {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      kbd {
+        font-family: inherit;
+        font-weight: 600;
+        color: var(--text);
       }
     </style>
   </head>
   <body>
-    <h1>CalmFrame debug: Phase 4 smoothing overlay</h1>
+    <main>
+      <section id="status" class="off" aria-labelledby="status-word">
+        <svg id="status-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <g class="shape protected">
+            <circle cx="32" cy="32" r="28" fill="currentColor" />
+            <path
+              d="M19 33 l9 9 l17 -19"
+              fill="none"
+              stroke="#14181d"
+              stroke-width="6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </g>
+          <g class="shape smoothing">
+            <circle cx="32" cy="32" r="28" fill="currentColor" />
+            <path
+              d="M14 34 C 20 24, 26 24, 32 32 S 44 40, 50 30"
+              fill="none"
+              stroke="#14181d"
+              stroke-width="6"
+              stroke-linecap="round"
+            />
+          </g>
+          <g class="shape off">
+            <circle cx="32" cy="32" r="25" fill="none" stroke="currentColor" stroke-width="6" />
+            <path d="M14 50 L50 14" stroke="currentColor" stroke-width="6" stroke-linecap="round" />
+          </g>
+        </svg>
+        <h1 id="status-word" aria-live="polite">Protection off</h1>
+        <p id="status-detail">Starting up</p>
+        <button id="protection" type="button" role="switch" aria-checked="false">
+          <span class="track" aria-hidden="true"><span class="knob"></span></span>
+          <span id="protection-label">Protection</span>
+        </button>
+      </section>
 
-    <h2>Flashes per second over a hazardous area</h2>
-    <canvas id="graph"></canvas>
-    <p class="hint">
-      Step 8 graph value, the largest over each stats message. Red while the detector reports a
-      hazard. The dashed line is the limit: more than 3 flashes in a second.
-    </p>
+      <p id="fps-warning" role="status" hidden></p>
 
-    <h2>Detector</h2>
-    <table class="numbers">
-      <tr>
-        <td>Hazard</td>
-        <td id="d-hazard">waiting</td>
-      </tr>
-      <tr>
-        <td>State</td>
-        <td id="d-state">waiting</td>
-      </tr>
-      <tr>
-        <td>Estimated frequency</td>
-        <td id="d-freq">waiting</td>
-      </tr>
-      <tr>
-        <td>Flash size</td>
-        <td id="d-size">waiting</td>
-      </tr>
-      <tr>
-        <td>Largest area fraction</td>
-        <td id="d-area">waiting</td>
-      </tr>
-      <tr>
-        <td>Movement set aside</td>
-        <td id="d-ignored">waiting</td>
-      </tr>
-      <tr>
-        <td>Smoothing</td>
-        <td id="d-smoothing">waiting</td>
-      </tr>
-      <tr>
-        <td>What the viewer sees</td>
-        <td id="d-viewer">waiting</td>
-      </tr>
-      <tr>
-        <td>Last smoothed episode</td>
-        <td id="d-episode">none yet</td>
-      </tr>
-      <tr>
-        <td>Grid self-test</td>
-        <td id="d-selftest">waiting</td>
-      </tr>
-      <tr>
-        <td>Smoothing self-test</td>
-        <td id="d-smoothtest">waiting</td>
-      </tr>
-    </table>
-    <div class="hint" id="d-selftest-detail"></div>
-    <div class="hint" id="d-smoothtest-detail"></div>
-    <p class="hint">
-      What the viewer sees: the detector run on the smoothed copy as drawn (its grid twin, blended
-      at the overlay's opacity). Residual is its peak-to-peak swing over the last second across the
-      cells that flashed; the flash threshold is 0.10.
-    </p>
+      <section aria-labelledby="graph-title">
+        <h2 id="graph-title">Flashes per second</h2>
+        <canvas
+          id="graph"
+          role="img"
+          aria-label="Scrolling graph of flashes per second over a hazardous area, with a dashed limit line at 3"
+        ></canvas>
+        <p class="hint">
+          Over the most affected area of the screen. Above the dashed line is more than 3 flashes in
+          a second, the WCAG 2.3.1 limit.
+        </p>
+      </section>
 
-    <h2>Timing</h2>
-    <table class="numbers">
-      <tr>
-        <td>Analysis cost per frame</td>
-        <td id="t-cost">waiting</td>
-      </tr>
-      <tr>
-        <td>Captured → frame callback</td>
-        <td id="t-callback">waiting</td>
-      </tr>
-      <tr>
-        <td>Callback → grid ready</td>
-        <td id="t-grid">waiting</td>
-      </tr>
-      <tr>
-        <td>Grid → decision</td>
-        <td id="t-decision">waiting</td>
-      </tr>
-      <tr>
-        <td>Captured → decision</td>
-        <td id="t-total">waiting</td>
-      </tr>
-      <tr>
-        <td>Decision → overlay drawn</td>
-        <td id="t-drawn">waiting</td>
-      </tr>
-      <tr>
-        <td>Captured → overlay drawn</td>
-        <td id="t-total-drawn">waiting</td>
-      </tr>
-      <tr>
-        <td>Frames skipped, GPU busy</td>
-        <td id="t-skips">waiting</td>
-      </tr>
-      <tr>
-        <td>Smoothing cost per frame</td>
-        <td id="t-smooth">waiting</td>
-      </tr>
-    </table>
-    <h2>Does drawing the overlay slow detection?</h2>
-    <table class="numbers">
-      <tr>
-        <td></td>
-        <td>overlay not drawn</td>
-        <td>overlay drawn</td>
-      </tr>
-      <tr>
-        <td>Callback → grid ready</td>
-        <td id="c-grid-idle">waiting</td>
-        <td id="c-grid-drawn">waiting</td>
-      </tr>
-      <tr>
-        <td>Captured → decision</td>
-        <td id="c-total-idle">waiting</td>
-        <td id="c-total-drawn">waiting</td>
-      </tr>
-      <tr>
-        <td>Frames skipped, GPU busy</td>
-        <td id="c-skips-idle">waiting</td>
-        <td id="c-skips-drawn">waiting</td>
-      </tr>
-    </table>
-    <p class="hint">
-      Latency is from each frame's capture timestamp. Chromium stamps it late, so these understate
-      the real delay; the slow-motion footage is the end-to-end number. "Overlay drawn" ends when
-      the GPU finishes the smoothed copy; the compositor and display add more. The comparison keeps
-      the last 120 frames of each kind, so it can be read after a burst ends.
-    </p>
+      <section class="thumbs" aria-label="What CalmFrame sees">
+        <figure>
+          <canvas id="raw" aria-label="Raw input thumbnail"></canvas>
+          <figcaption>
+            Raw input (unprotected)
+            <span class="sub">The screen under the overlay</span>
+          </figcaption>
+        </figure>
+        <figure>
+          <div class="preview-box">
+            <canvas id="preview" aria-label="Protected preview thumbnail"></canvas>
+            <span id="preview-idle">Not smoothing: you see the screen as it is</span>
+          </div>
+          <figcaption>
+            Protected preview
+            <span class="sub">What you see while smoothing</span>
+          </figcaption>
+        </figure>
+      </section>
 
-    <h2>Hazard and state log</h2>
-    <ul id="hazard-log">
-      <li>no hazards yet</li>
-    </ul>
+      <section class="control" aria-labelledby="sensitivity-title">
+        <label class="title" id="sensitivity-title" for="sensitivity">Sensitivity</label>
+        <input
+          id="sensitivity"
+          type="range"
+          min="0"
+          max="3"
+          step="1"
+          value="1"
+          aria-describedby="sensitivity-name sensitivity-desc"
+        />
+        <div class="scale" aria-hidden="true"><span>More sensitive</span><span>Strict</span></div>
+        <p id="sensitivity-name"></p>
+        <p id="sensitivity-desc"></p>
+      </section>
 
-    <h2>Live capture (what the overlay sees)</h2>
-    <video id="preview" muted playsinline></video>
-    <label
-      ><input type="checkbox" id="preview-on" /> Preview on (shares the overlay's capture; leave off
-      when measuring)</label
-    >
+      <section class="control">
+        <label class="check">
+          <input id="ignore-movement" type="checkbox" checked aria-describedby="movement-desc" />
+          <span>Ignore movement (recommended)</span>
+        </label>
+        <p class="hint" id="movement-desc">
+          A change only counts when a whole area brightens or darkens at once, so scrolling and
+          dragging windows don't start smoothing. Untick to count every change, as the detector
+          first did.
+        </p>
+      </section>
 
-    <h2>Overlay capture stats</h2>
-    <table>
-      <tr>
-        <td>Frame rate</td>
-        <td id="fps">waiting</td>
-      </tr>
-      <tr>
-        <td>Capture to callback</td>
-        <td id="delay">waiting</td>
-      </tr>
-      <tr>
-        <td>Frame size</td>
-        <td id="size">waiting</td>
-      </tr>
-      <tr>
-        <td>Applied settings</td>
-        <td id="settings">waiting</td>
-      </tr>
-      <tr>
-        <td>Skipped frames</td>
-        <td id="skipped">waiting</td>
-      </tr>
-      <tr>
-        <td>Overlay</td>
-        <td id="overlay">waiting</td>
-      </tr>
-    </table>
+      <section aria-labelledby="events-title">
+        <div class="events-head">
+          <h2 id="events-title">Flash events</h2>
+          <h2 id="counter"><strong id="counter-value">0</strong> smoothed since start</h2>
+        </div>
+        <ol id="events" aria-label="Flash event log, newest first">
+          <li class="empty">None yet</li>
+        </ol>
+      </section>
 
-    <h2>Motion test</h2>
-    <label
-      ><input type="checkbox" id="motion-on" /> Moving bar (changes every display frame, no
-      flashing), for checking the capture frame rate</label
-    >
-    <canvas id="motion" width="440" height="20"></canvas>
-    <div class="hint" id="motion-fps"></div>
-
-    <h2>Capture size cap</h2>
-    <div id="sizes"></div>
-
-    <h2>Capture-leak self-check</h2>
-    <button id="selfcheck-run">Run self-check</button>
-    <span id="selfcheck-verdict">not run yet</span>
-    <div id="selfcheck-detail"></div>
-    <p class="hint">Pause any video first. Takes about 3 seconds; the tint blinks off and on.</p>
-
-    <h2>Movement filter</h2>
-    <label
-      ><input type="checkbox" id="concurrency-on" checked /> Ignore movement: a change only counts
-      when a whole area changes the same way in the same frame</label
-    >
-    <p class="hint">
-      Untick to fall back to the old detector, which counts every change (scrolling triggers it).
-    </p>
-
-    <h2>Stacking test</h2>
-    <label
-      ><input type="checkbox" id="on-top" /> Keep this window above the overlay and hide it from
-      capture</label
-    >
-
-    <p class="hint">
-      Kill switch: Ctrl+Alt+Shift+C switches protection off (overlay hidden) and on.
-    </p>
-
+      <footer>
+        <kbd id="kill-switch"></kbd> switches protection off and on from anywhere. Closing this
+        window keeps CalmFrame running in the tray.
+      </footer>
+    </main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
