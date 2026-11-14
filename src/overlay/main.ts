@@ -208,7 +208,8 @@ function startHeartbeat(): void {
   setInterval(() => {
     api.sendHeartbeat({
       state: analysis ? analysis.state : 'off',
-      frameAgeMs: lastFrameAt === null ? null : performance.now() - lastFrameAt
+      frameAgeMs: lastFrameAt === null ? null : performance.now() - lastFrameAt,
+      captureLive: track !== null && track.readyState === 'live'
     })
   }, HEARTBEAT_MS)
 }
