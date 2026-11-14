@@ -58,14 +58,15 @@ The spec says to start a fresh session for each phase, across two laptops. Entir
 - **Push at least after every finished checklist item**, so the other laptop sees your work and checkpoints.
 - **One trail per phase.** When starting a phase from `main`, create its trail and branch (e.g. title "Phase 0: overlay spike"). Run `entire agent-help trail create` for the exact flags first.
 - **Don't guess Entire flags.** Run `entire agent-help`, then `entire agent-help <command>`, or use the `entire` skill.
+- **Git Bash on Windows rewrites `/et/...` arguments into file paths.** Prefix those commands with `MSYS_NO_PATHCONV=1` (e.g. `MSYS_NO_PATHCONV=1 entire repo view /et/calmframe/calmframe`), or use PowerShell.
 - **Don't** edit Entire's hooks (in `.claude/settings.json` or `.git/hooks`), delete `refs/entire/*`, or rewrite pushed history.
 - **Ask first.** Commands the CLI marks as user-owned (`enable`, `configure`, `login`, `repo`, `project`, `org`) are for the user to run. Suggest them; don't run them unless asked.
 - **Transcripts are uploaded with checkpoints.** Never put secrets, tokens or personal details in prompts or commits.
 
 ### Setting up the Mac (once)
 
-1. Install the Entire CLI (https://docs.entire.com/installation), then run `entire login`.
-2. Clone the repo from Entire, then run `npm install`.
+1. Install the Entire CLI (https://docs.entire.com/installation), then run `entire login`. The repo owner grants access with `entire project grant add calmframe <provider>:<handle> --role writer`.
+2. Clone with `entire repo clone /et/calmframe/calmframe`, then run `npm install`.
 3. In the clone, run `entire enable --agent claude-code`. Git hooks aren't cloned, so this step reinstalls them. `entire status` should then show the repo as enabled.
 4. Start Claude Code in the clone. Its first message should be "Read CLAUDE.md and docs/SPEC.md".
 
