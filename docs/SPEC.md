@@ -114,7 +114,7 @@ Each cell keeps a running extremum e and a direction d. A transition is recorded
 2. While idle: keep the running low and high up to date. If Y has risen 0.10 above the low, record a **rising transition**. If it has dropped 0.10 below the high, record a **falling transition**. Either way set d accordingly and e = Y.
 3. While rising: if Y > e, set e = Y. If e − Y ≥ 0.10, record a **falling transition**, then set d = falling and e = Y.
 4. While falling: the mirror image. If Y < e, set e = Y. If Y − e ≥ 0.10, record a **rising transition**, then set d = rising and e = Y.
-5. A transition only counts if the darker of the two values is below 0.80.
+5. A transition only counts if the darker of the two values is below 0.80. A reversal that fails this test is ignored outright: the cell keeps its direction and extremum. Otherwise a flash that ramps from 0.98 down to 0.5 is used up at 0.85 and never counted.
 6. A cell with no transition for 1 s returns to idle, with low and high reset to the current Y.
 7. Run the same tracker on v with threshold 20 for red.
 
@@ -126,9 +126,9 @@ Tracking the extremum instead of frame-to-frame differences matters. A flash tha
 
 Each cell stores three things, all driven by capture timestamps rather than frame counts:
 
-- **t\_last**: time of its latest transition, and **swing**: the size of that reversal.
-- **count c**: transitions in the last 1.0 s.
-- **streak s**: consecutive transitions each arriving within 167 ms of the one before. Reset s to 0 when 167 ms pass with no transition.
+- **t\_last**: time of its latest transition, and **swing**: the size of that reversal, measured from the extremum it started at to the furthest point reached since. It keeps growing while a ramped flash continues.
+- **count c**: transitions in the last 1.0 s, with the window open at its old end. An evenly spaced 3 Hz strobe therefore holds 6, and the strict trigger at 7 means more than 3 flashes.
+- **streak s**: consecutive transitions each arriving within 167 ms of the one before. The first transition of a run counts as 1, so N = 3 fires on the third. Reset s to 0 when 167 ms pass with no transition.
 
 The 167 ms figure is the three-per-second limit restated. More than 3 flashes per second means more than 6 transitions per second, so less than 1/6 s between them.
 
@@ -212,9 +212,11 @@ I checked this closed form against a frame-by-frame simulation and they agree to
 | α | 3 Hz | 5 Hz | 10 Hz | 15 Hz |
 | --- | --- | --- | --- | --- |
 | 0.15 | 0.67 | 0.45 | 0.24 | 0.16 |
-| 0.10 | 0.48 | 0.31 | 0.16 | 0.11 |
+| 0.10 | 0.48 | 0.31 | 0.16 | 0.10 |
 | 0.05 | 0.25 | 0.15 | 0.08 | 0.05 |
 | 0.03 | 0.15 | 0.09 | 0.05 | 0.03 |
+
+The α = 0.10, 15 Hz cell is 0.105 to three decimals. An earlier draft rounded that to 0.11; the Phase 1 tests caught it. At 0.105 it is still a flash.
 
 Anything above 0.10 is still a flash by the standard. A fixed α of 0.15 fails at every frequency in the table, which is why the filter adapts.
 
@@ -419,13 +421,34 @@ Boxes 1 and 2 passed by 9:00 PM, so the design stands and no fallback is needed.
 
 ### Phase 1: detector core (B, Friday 8:00 to 11:00 PM)
 
-- [ ] Tests on synthetic grids pass: 2 Hz full-screen strobe is safe, 10 Hz is a hazard, a single cut is safe.
-- [ ] Early mode fires on exactly the third fast transition.
-- [ ] Area rule: a 10 Hz strobe filling 20% of a window is safe and 30% is a hazard.
-- [ ] Contrast rules: a swing of 0.05 is safe, and a flash between two states both above 0.80 is safe.
-- [ ] A red and black strobe raises a red hazard. A slow 2-second fade loop is safe.
-- [ ] The α solver reproduces the table in "Mitigation math", and the residual formula matches a simulated filter.
-- [ ] State machine: on within one frame, 1.5 s hold, fade, and an immediate return to Active if a hazard arrives mid-fade.
+- [x] Tests on synthetic grids pass: 2 Hz full-screen strobe is safe, 10 Hz is a hazard, a single cut is safe.
+- [x] Early mode fires on exactly the third fast transition.
+- [x] Area rule: a 10 Hz strobe filling 20% of a window is safe and 30% is a hazard.
+- [x] Contrast rules: a swing of 0.05 is safe, and a flash between two states both above 0.80 is safe.
+- [x] A red and black strobe raises a red hazard. A slow 2-second fade loop is safe.
+- [x] The α solver reproduces the table in "Mitigation math", and the residual formula matches a simulated filter.
+- [x] State machine: on within one frame, 1.5 s hold, fade, and an immediate return to Active if a hazard arrives mid-fade.
+
+#### Phase 1 results (Fri Nov 13, built and tested on the Windows laptop)
+
+All seven boxes pass, with 116 tests in `src/core`. The end-to-end check under "Check the filter against the detector" passes as written. What Phase 3 needs to know, and the spec readings the code settles:
+
+- **Interface.** `new Detector(options).step(grid, tMs)` takes linear RGB per cell (`inputChannels: 4` accepts an RGBA GPU read-back as-is) and returns one result object, reused every frame. `new OverlayStateMachine().step(tMs, detection, captureFps)` returns α, d, opacity and the red flag. Neither allocates per frame.
+- **Cost.** A detector step takes under 1 ms, measured in Vitest on the demo laptop: about 0.9 ms on a 10 Hz full-screen strobe, and 0.2 to 0.5 ms on a static screen. The Phase 3 budget is 4 ms. Hot loops copy imported constants to locals, because some module loaders turn each read of an import into a property lookup. That alone took the tracker from 0.62 to 0.16 ms per frame.
+- **Readings of the spec.** Step 4 rule 5 and Step 5 now state the first three.
+  - A reversal that fails the dark limit, or the saturated-red test, is ignored, not half-counted.
+  - Swing grows with a ramped flash, so ΔL reports the full flash.
+  - The first transition of a run counts as streak 1. The count window is open at its old end.
+  - Luminance needs a change of at least 0.10 and red a change of more than 20, following WCAG's own wording.
+  - The calibrated window applies the 10° field's share of the screen width in both directions, the way the WCAG window is one third in both.
+  - The red tracker remembers the red ratio of each extremum, so "ρ ≥ 0.8 in at least one of the two states" is checked against the state the reversal started from.
+  - For a red-only hazard, f̂ comes from the red intervals and ΔL from the luminance swing of the same cells (often near 0). Smoothing is then light and the 50% desaturation does the work.
+  - The graph value is computed separately for luminance and red, and the larger is reported.
+  - Median and 90th percentile use nearest rank.
+  - The IRIS extended-failure option counts frames whose area count is 4 to 6, from capture timestamps, and fails at 4 s within any 5 s. A sustained 2 Hz strobe fails at about 4.75 s, matching IRIS's "warning, then extended failure after 4 s".
+- **State machine details.** The fade is timed from the moment the hold ran out, not from the next frame. A hazard mid-fade returns to Active with the stronger of the eased and the required α and d. A hazard with no usable frequency gets the strongest setting (α 0.03, d 0.4).
+- **Finding for Phase 4.** At 3 to 5 Hz, α clamps at 0.03, so the smoothed copy needs over a second to settle when it starts far from the average (a time constant of about 0.55 s). The detector can see that slow drift as one isolated transition, but never two within a second, so it never forms a flash.
+- **Spec fix.** The residual table's α = 0.10, 15 Hz cell is 0.105, so 0.10 to two decimals, not 0.11.
 
 ### Phase 2: strobe test page (C, Friday 8:00 to 9:30 PM)
 

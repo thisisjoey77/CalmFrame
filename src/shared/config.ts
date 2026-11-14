@@ -85,6 +85,34 @@ export const CAPTURE_MAX_HEIGHT = 540
 /** Scale for the red value v = RED_SCALE * max(0, R - G - B). Step 3. */
 export const RED_SCALE = 320
 
+/** sRGB decoding (Step 1): channel values (0..1) at or below the cutoff are on the linear
+ *  segment, divided by the slope; above it, ((C + offset) / (1 + offset)) ^ gamma. */
+export const SRGB_LINEAR_CUTOFF = 0.04045
+export const SRGB_LINEAR_SLOPE = 12.92
+export const SRGB_OFFSET = 0.055
+export const SRGB_GAMMA = 2.4
+/** Relative luminance weights for linear R, G and B. Step 1. */
+export const LUMA_R = 0.2126
+export const LUMA_G = 0.7152
+export const LUMA_B = 0.0722
+
+/** Per-cell ring of transition times behind the 1 s count c. A cell records at most one
+ *  transition per frame, so 64 covers 60 fps capture; faster input saturates c at 64. */
+export const TRACKER_RING_CAPACITY = 64
+
+/** Flash size dL is this percentile of swing over hot cells. Step 8. */
+export const FLASH_SIZE_PERCENTILE = 0.9
+
+/** IRIS extended failure, validator only ("Test clips"): a 1 s transition count in
+ *  [MIN, MAX] over the area limit, sustained for EXTENDED_FAIL_MS within any
+ *  EXTENDED_FAIL_WINDOW_MS. Above MAX is an outright failure (the strict trigger). */
+export const EXTENDED_FAIL_MIN_TRANSITIONS = 4
+export const EXTENDED_FAIL_MAX_TRANSITIONS = 6
+export const EXTENDED_FAIL_MS = 4000
+export const EXTENDED_FAIL_WINDOW_MS = 5000
+/** Frames remembered for the extended-failure window (5 s at up to ~200 fps). */
+export const EXTENDED_FAIL_RING_CAPACITY = 1024
+
 /** Strict trigger: a cell is hot when its 1 s count c reaches this. Step 7. */
 export const STRICT_TRIGGER_COUNT = 7
 /** Sensitivity slider steps for N; the step after the last is strict mode. Step 7. */
@@ -97,6 +125,8 @@ export const FRAME_GAP_RESET_MS = 250
 
 /** Width of the visual field the WCAG area rule is defined on, in degrees. Step 6. */
 export const VISUAL_FIELD_DEGREES = 10
+/** Calibrated area mode: viewing distance used when none is set (the spec's example). Step 6. */
+export const DEFAULT_VIEWING_DISTANCE_CM = 60
 
 export type AreaMode = 'wcag' | 'calibrated' | 'iris'
 /** Default area mode. Step 6. */
