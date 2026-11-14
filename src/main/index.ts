@@ -14,12 +14,15 @@ import {
   CAPTURE_MAX_HEIGHT,
   CAPTURE_MAX_WIDTH,
   DEBUG_CAPTURE_SIZES,
+  DEBUG_FREEZE_ACCELERATOR,
+  DEBUG_FREEZE_MS,
   DEBUG_LOG_INTERVAL_MS,
   FPS_SWEEP_LEAD_MS,
   FPS_SWEEP_MEASURE_MS,
   FPS_SWEEP_WARMUP_MS,
   KILL_SWITCH_ACCELERATOR,
-  OVERLAY_BOTTOM_INSET
+  OVERLAY_BOTTOM_INSET,
+  WATCHDOG_MS
 } from '../shared/config'
 import {
   IPC,
@@ -29,7 +32,9 @@ import {
   type GridSelfTestResult,
   type HazardEvent,
   type OverlayState,
-  type SelfCheckResult
+  type SelfCheckResult,
+  type SmoothSelfTestResult,
+  type StateChange
 } from '../shared/messages'
 
 type Page = 'dashboard' | 'overlay'
@@ -42,9 +47,19 @@ const fpsSweep = process.env['CALMFRAME_FPS_SWEEP'] === '1'
 /** Debug-only: show the Phase 0 red tint on the overlay, and run the capture-leak check. */
 const debugTint = process.env['CALMFRAME_DEBUG_TINT'] === '1'
 
-/** The overlay sends its Pass A self-test once at startup, possibly before the debug
- *  window has loaded, so main keeps it and replays it. */
+/** The overlay sends its self-tests once at startup, possibly before the debug window has
+ *  loaded, so main keeps them and replays them. */
 let gridSelfTest: GridSelfTestResult | null = null
+let smoothSelfTest: SmoothSelfTestResult | null = null
+
+/** Protection on: the overlay is shown and may smooth. Off is the Disabled state ("On fast,
+ *  off slow"): hidden until the user re-enables it with the kill switch. */
+let protectionOn = true
+/** When the latest heartbeat arrived (Date.now()), or null before the first. */
+let lastHeartbeatAt: number | null = null
+/** Fires WATCHDOG_MS after the latest heartbeat. Armed by the first heartbeat, so a slow
+ *  startup (page load, self-tests) can't trip it; the overlay draws nothing before then. */
+let watchdogTimer: ReturnType<typeof setTimeout> | null = null
 
 /** Load one of the renderer pages: the Vite dev server in dev, the built file otherwise. */
 function loadPage(win: BrowserWindow, page: Page, hash = ''): void {
@@ -158,7 +173,7 @@ function createOverlayWindow(): BrowserWindow {
 
   // Fail open: if the overlay renderer dies, hide the overlay.
   win.webContents.on('render-process-gone', (_event, details) => {
-    hideOverlay(`overlay renderer gone (${details.reason})`)
+    disableProtection(`overlay renderer gone (${details.reason})`)
   })
 
   loadPage(win, 'overlay', debugTint ? 'tint' : '')
@@ -182,6 +197,7 @@ function createDebugWindow(): BrowserWindow {
   win.on('ready-to-show', () => win.show())
   win.webContents.on('did-finish-load', () => {
     if (gridSelfTest) win.webContents.send(IPC.gridSelfTest, gridSelfTest)
+    if (smoothSelfTest) win.webContents.send(IPC.smoothSelfTest, smoothSelfTest)
   })
   win.on('closed', () => {
     debugWin = null
@@ -213,6 +229,47 @@ function showOverlay(reason: string): void {
   overlayWin.setAlwaysOnTop(true, 'screen-saver')
   console.log(`[overlay] shown: ${reason}`)
   sendOverlayState({ visible: true, reason })
+}
+
+/**
+ * Fail open, or the user's off switch: hide the overlay at once, then tell the renderer to
+ * go to Disabled. A frozen renderer gets the message when it recovers, and stays hidden
+ * until the user re-enables protection.
+ */
+function disableProtection(reason: string): void {
+  protectionOn = false
+  hideOverlay(`Protection off: ${reason}`)
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send(IPC.protection, false, reason)
+  }
+}
+
+/** The user's on switch. Refused while the renderer is not sending heartbeats, since a
+ *  frozen overlay must not be shown again. */
+function enableProtection(reason: string): void {
+  if (lastHeartbeatAt === null || Date.now() - lastHeartbeatAt > WATCHDOG_MS) {
+    console.log('[protection] not switched back on: the overlay renderer is not responding')
+    sendOverlayState({ visible: false, reason: 'Protection off: overlay not responding' })
+    return
+  }
+  protectionOn = true
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send(IPC.protection, true, reason)
+  }
+  showOverlay(reason)
+}
+
+/** Watchdog ("Safety mechanisms"): no heartbeat for WATCHDOG_MS hides the overlay and sets
+ *  Disabled, because a frozen opaque overlay would block the whole screen. */
+function onHeartbeat(): void {
+  lastHeartbeatAt = Date.now()
+  if (watchdogTimer !== null) clearTimeout(watchdogTimer)
+  watchdogTimer = setTimeout(() => {
+    watchdogTimer = null
+    const silent = lastHeartbeatAt === null ? 'unknown' : String(Date.now() - lastHeartbeatAt)
+    if (protectionOn) disableProtection(`watchdog, no heartbeat for ${silent} ms`)
+    else console.log(`[watchdog] no heartbeat for ${silent} ms (protection already off)`)
+  }, WATCHDOG_MS)
 }
 
 /** Grant the primary screen to getDisplayMedia (spec: "Capture requirements"). */
@@ -263,12 +320,36 @@ function installIpc(): void {
 
   ipcMain.on(IPC.captureError, (_event, message: string) => {
     console.error(`[capture] error: ${message}`)
-    hideOverlay(`capture error: ${message}`)
+    disableProtection(`capture error: ${message}`)
   })
 
   ipcMain.on(IPC.pipelineError, (_event, message: string) => {
     console.error(`[pipeline] error: ${message}`)
-    hideOverlay(`detection off: ${message}`)
+    disableProtection(`pipeline error: ${message}`)
+  })
+
+  ipcMain.on(IPC.heartbeat, () => onHeartbeat())
+
+  ipcMain.on(IPC.smoothSelfTest, (_event, result: SmoothSelfTestResult) => {
+    smoothSelfTest = result
+    debugWin?.webContents.send(IPC.smoothSelfTest, result)
+    logSafely(
+      'smooth self-test',
+      () => `[smooth self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
+    )
+  })
+
+  ipcMain.on(IPC.stateChange, (_event, change: StateChange) => {
+    debugWin?.webContents.send(IPC.stateChange, change)
+    logSafely('state', () => {
+      const when = new Date(change.wallMs).toISOString().slice(11, 23)
+      const why =
+        change.frequencyHz > 0
+          ? `${change.reason}; f ${fmt(change.frequencyHz, 1)} Hz, dL ${fmt(change.flashSize, 2)}`
+          : change.reason
+      const red = change.red ? ', red desaturation' : ''
+      return `[state] ${when} UTC (t ${fmt(change.tMs, 1)} ms) ${change.from} -> ${change.to} (${why}): alpha ${fmt(change.alpha, 3)}, d ${fmt(change.dim, 2)}, opacity ${fmt(change.opacity, 2)}${red}`
+    })
   })
 
   ipcMain.on(IPC.gridSelfTest, (_event, result: GridSelfTestResult) => {
@@ -287,17 +368,28 @@ function installIpc(): void {
     if (now - lastDetectLog < DEBUG_LOG_INTERVAL_MS) return
     lastDetectLog = now
     const l = stats.latency
+    const w = stats.whileDrawn
+    const sm = stats.smoothing
+    const v = stats.viewer
+    const pair = (t: { median: number | null; p95: number | null }): string =>
+      `${fmt(t.median, 1)}/${fmt(t.p95, 1)}`
     logSafely(
       'detect',
       () =>
         `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
         `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
-        `hot ${stats.hotCells} | state ${stats.state} | cost median ${fmt(stats.cost.median, 2)} ms, ` +
-        `p95 ${fmt(stats.cost.p95, 2)} ms (issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}) | ` +
-        `latency median/p95 ms: capture>callback ${fmt(l.captureToCallback.median, 1)}/${fmt(l.captureToCallback.p95, 1)}, ` +
-        `callback>grid ${fmt(l.callbackToGrid.median, 1)}/${fmt(l.callbackToGrid.p95, 1)}, ` +
-        `grid>decision ${fmt(l.gridToDecision.median, 1)}/${fmt(l.gridToDecision.p95, 1)}, ` +
-        `total ${fmt(l.captureToDecision.median, 1)}/${fmt(l.captureToDecision.p95, 1)} | busy skips ${stats.busySkips}`
+        `hot ${stats.hotCells} | state ${stats.state}, alpha ${fmt(sm.alpha, 3)}, d ${fmt(sm.dim, 2)}, ` +
+        `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''} | ` +
+        `seen: ${v.checking ? `graph ${fmt(v.graphValue, 1)}, residual ${fmt(v.residual, 3)}` : 'overlay not drawn'} | ` +
+        `cost median ${fmt(stats.cost.median, 2)} ms, p95 ${fmt(stats.cost.p95, 2)} ms ` +
+        `(issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}; ` +
+        `pass B ${fmt(stats.smoothMedianMs, 2)}, pass C ${fmt(stats.drawMedianMs, 2)}, viewer ${fmt(stats.viewerMedianMs, 2)}) | ` +
+        `latency median/p95 ms: capture>callback ${pair(l.captureToCallback)}, ` +
+        `callback>grid ${pair(l.callbackToGrid)} (drawn ${pair(w.callbackToGrid)}), ` +
+        `grid>decision ${pair(l.gridToDecision)}, ` +
+        `total ${pair(l.captureToDecision)} (drawn ${pair(w.captureToDecision)}), ` +
+        `decision>drawn ${pair(l.decisionToDrawn)}, capture>drawn ${pair(l.captureToDrawn)} | ` +
+        `busy skips ${stats.busySkips} (drawn ${w.busySkips} of ${w.frames})`
     )
   })
 
@@ -358,11 +450,21 @@ app.whenReady().then(() => {
   debugWin = createDebugWindow()
   overlayWin = createOverlayWindow()
 
+  // Kill switch ("Safety mechanisms"): to Disabled and hidden at once, and back on.
   const registered = globalShortcut.register(KILL_SWITCH_ACCELERATOR, () => {
-    if (overlayWin?.isVisible()) hideOverlay('kill switch')
-    else showOverlay('kill switch')
+    if (protectionOn) disableProtection('kill switch')
+    else enableProtection('kill switch')
   })
   console.log(`[kill switch] ${KILL_SWITCH_ACCELERATOR} registered: ${registered}`)
+
+  // Hidden debug command, dev builds only: freeze the overlay renderer to test the watchdog.
+  if (is.dev) {
+    const freezeRegistered = globalShortcut.register(DEBUG_FREEZE_ACCELERATOR, () => {
+      console.log(`[debug] freezing the overlay renderer for ${DEBUG_FREEZE_MS} ms`)
+      overlayWin?.webContents.send(IPC.debugFreeze, DEBUG_FREEZE_MS)
+    })
+    console.log(`[debug] freeze ${DEBUG_FREEZE_ACCELERATOR} registered: ${freezeRegistered}`)
+  }
 
   if (fpsSweep) void runFpsSweep()
 })

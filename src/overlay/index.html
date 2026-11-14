@@ -16,6 +16,15 @@
         overflow: hidden;
         background: transparent;
       }
+      /* The smoothed copy (Pass C). Its drawing buffer is the capture size; the script
+         stretches it over the whole display, so it lines up with the screen underneath.
+         The window stops 1 DIP short of the bottom, which crops the last row. */
+      #smoothed {
+        position: fixed;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+      }
       /* The capture feeds the frame callback; it must stay in the page but not be seen. */
       #capture {
         position: fixed;
@@ -28,6 +37,7 @@
     </style>
   </head>
   <body>
+    <canvas id="smoothed"></canvas>
     <video id="capture" muted playsinline></video>
     <script type="module" src="./main.ts"></script>
   </body>

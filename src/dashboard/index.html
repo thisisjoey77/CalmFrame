@@ -100,7 +100,7 @@
     </style>
   </head>
   <body>
-    <h1>CalmFrame debug: Phase 3 live detection</h1>
+    <h1>CalmFrame debug: Phase 4 smoothing overlay</h1>
 
     <h2>Flashes per second over a hazardous area</h2>
     <canvas id="graph"></canvas>
@@ -132,11 +132,33 @@
         <td id="d-area">waiting</td>
       </tr>
       <tr>
+        <td>Smoothing</td>
+        <td id="d-smoothing">waiting</td>
+      </tr>
+      <tr>
+        <td>What the viewer sees</td>
+        <td id="d-viewer">waiting</td>
+      </tr>
+      <tr>
+        <td>Last smoothed episode</td>
+        <td id="d-episode">none yet</td>
+      </tr>
+      <tr>
         <td>Grid self-test</td>
         <td id="d-selftest">waiting</td>
       </tr>
+      <tr>
+        <td>Smoothing self-test</td>
+        <td id="d-smoothtest">waiting</td>
+      </tr>
     </table>
     <div class="hint" id="d-selftest-detail"></div>
+    <div class="hint" id="d-smoothtest-detail"></div>
+    <p class="hint">
+      What the viewer sees: the detector run on the smoothed copy as drawn (its grid twin, blended
+      at the overlay's opacity). Residual is its peak-to-peak swing over the last second across the
+      cells that flashed; the flash threshold is 0.10.
+    </p>
 
     <h2>Timing</h2>
     <table class="numbers">
@@ -162,19 +184,52 @@
       </tr>
       <tr>
         <td>Decision → overlay drawn</td>
-        <td>Phase 4</td>
+        <td id="t-drawn">waiting</td>
+      </tr>
+      <tr>
+        <td>Captured → overlay drawn</td>
+        <td id="t-total-drawn">waiting</td>
       </tr>
       <tr>
         <td>Frames skipped, GPU busy</td>
         <td id="t-skips">waiting</td>
       </tr>
+      <tr>
+        <td>Smoothing cost per frame</td>
+        <td id="t-smooth">waiting</td>
+      </tr>
+    </table>
+    <h2>Does drawing the overlay slow detection?</h2>
+    <table class="numbers">
+      <tr>
+        <td></td>
+        <td>overlay not drawn</td>
+        <td>overlay drawn</td>
+      </tr>
+      <tr>
+        <td>Callback → grid ready</td>
+        <td id="c-grid-idle">waiting</td>
+        <td id="c-grid-drawn">waiting</td>
+      </tr>
+      <tr>
+        <td>Captured → decision</td>
+        <td id="c-total-idle">waiting</td>
+        <td id="c-total-drawn">waiting</td>
+      </tr>
+      <tr>
+        <td>Frames skipped, GPU busy</td>
+        <td id="c-skips-idle">waiting</td>
+        <td id="c-skips-drawn">waiting</td>
+      </tr>
     </table>
     <p class="hint">
       Latency is from each frame's capture timestamp. Chromium stamps it late, so these understate
-      the real delay; the slow-motion footage is the end-to-end number.
+      the real delay; the slow-motion footage is the end-to-end number. "Overlay drawn" ends when
+      the GPU finishes the smoothed copy; the compositor and display add more. The comparison keeps
+      the last 120 frames of each kind, so it can be read after a burst ends.
     </p>
 
-    <h2>Hazard log</h2>
+    <h2>Hazard and state log</h2>
     <ul id="hazard-log">
       <li>no hazards yet</li>
     </ul>
@@ -237,7 +292,9 @@
       capture</label
     >
 
-    <p class="hint">Kill switch: Ctrl+Alt+Shift+C toggles the overlay.</p>
+    <p class="hint">
+      Kill switch: Ctrl+Alt+Shift+C switches protection off (overlay hidden) and on.
+    </p>
 
     <script type="module" src="./main.ts"></script>
   </body>

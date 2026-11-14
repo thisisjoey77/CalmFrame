@@ -307,8 +307,8 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 3. Pass A: linearise and area-average down to 96×54, then read those 5,184 values back to JavaScript. The read-back is asynchronous and never stalls the frame loop (Phase 3 results).
 4. Run the detector. It returns hazard, type, f̂, ΔL and the hot mask.
 5. Step the state machine. It returns α, d and overlay opacity.
-6. Pass B: update the smoothing state in a half-float texture.
-7. Pass C: draw d · S, re-encoded for display, at the current opacity.
+6. Pass B: fold the frame into the smoothing state in a half-float texture, every frame. It runs in the frame callback right after Pass A's read-back is fenced, so it uses the α decided on the previous frame, never delays the read-back, and draws only offscreen, so it presents nothing (Phase 4 results).
+7. Pass C: after each decision, and only while the opacity is above 0, draw d · S, re-encoded for display, at the current opacity. When the opacity reaches 0, clear the canvas once and draw nothing more until the next hazard.
 8. Every third frame, send stats and the 96×54 thumbnail to the dashboard.
 
 ### Overlay window requirements

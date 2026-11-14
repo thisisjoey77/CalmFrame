@@ -16,6 +16,15 @@ const api: CalmFrameApi = {
   sendHazardEvent: (event) => ipcRenderer.send(IPC.hazardEvent, event),
   sendGridSelfTest: (result) => ipcRenderer.send(IPC.gridSelfTest, result),
   sendPipelineError: (message) => ipcRenderer.send(IPC.pipelineError, message),
+  sendSmoothSelfTest: (result) => ipcRenderer.send(IPC.smoothSelfTest, result),
+  sendHeartbeat: (heartbeat) => ipcRenderer.send(IPC.heartbeat, heartbeat),
+  sendStateChange: (change) => ipcRenderer.send(IPC.stateChange, change),
+  onProtection: (callback) => {
+    ipcRenderer.on(IPC.protection, (_event, enabled, reason) => callback(enabled, reason))
+  },
+  onDebugFreeze: (callback) => {
+    ipcRenderer.on(IPC.debugFreeze, (_event, ms) => callback(ms))
+  },
   runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
   restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
   setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),
@@ -36,6 +45,12 @@ const api: CalmFrameApi = {
   },
   onGridSelfTest: (callback) => {
     ipcRenderer.on(IPC.gridSelfTest, (_event, result) => callback(result))
+  },
+  onSmoothSelfTest: (callback) => {
+    ipcRenderer.on(IPC.smoothSelfTest, (_event, result) => callback(result))
+  },
+  onStateChange: (callback) => {
+    ipcRenderer.on(IPC.stateChange, (_event, change) => callback(change))
   }
 }
 

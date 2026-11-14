@@ -9,11 +9,12 @@
  * the overlay's main thread and cost captured frames. The startup self-test still reads
  * synchronously.
  *
- * Phase 4 adds Passes B and C on the same context, reading the uploaded frame from
+ * Passes B and C (smoothPass.ts) run on the same context and read the uploaded frame from
  * `source`.
  */
 
 import { GRID_CELLS, GRID_COLS, GRID_READBACK_SLOTS, GRID_ROWS } from '../shared/config'
+import { checkError, linkProgram, setNearestClamp } from './glUtil'
 import { FULLSCREEN_VS, GRID_FS } from './shaders'
 
 /** Timing of one finished read-back, handed over with its grid. Reused between calls.
@@ -29,6 +30,8 @@ export interface GridReadback {
   readyAt: number
   /** Main-thread time to copy the finished grid out of its buffer. */
   copyMs: number
+  /** The caller's tag for this frame, as passed to analyse(). */
+  tag: number
 }
 
 export type GridConsumer = (grid: Float32Array, info: GridReadback) => void
@@ -39,6 +42,7 @@ interface Slot {
   tMs: number
   startedAt: number
   issueMs: number
+  tag: number
 }
 
 export class GridPass {
@@ -63,7 +67,8 @@ export class GridPass {
     startedAt: 0,
     issueMs: 0,
     readyAt: 0,
-    copyMs: 0
+    copyMs: 0,
+    tag: 0
   }
 
   constructor(private readonly gl: WebGL2RenderingContext) {
@@ -107,7 +112,7 @@ export class GridPass {
       const buffer = gl.createBuffer()
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
       gl.bufferData(gl.PIXEL_PACK_BUFFER, this.grid.byteLength, gl.STREAM_READ)
-      this.free.push({ buffer, sync: null, tMs: 0, startedAt: 0, issueMs: 0 })
+      this.free.push({ buffer, sync: null, tMs: 0, startedAt: 0, issueMs: 0, tag: 0 })
     }
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
 
@@ -147,10 +152,11 @@ export class GridPass {
    * Live frame: upload it, draw Pass A and start reading the grid back, without waiting.
    * The grid arrives later through collect().
    * @param tMs the frame's capture timestamp, handed back with its grid
+   * @param tag any number the caller wants handed back with this frame's grid
    * @returns false if every read-back slot is still busy, so the frame was skipped
    *          rather than waiting for the GPU
    */
-  analyse(video: HTMLVideoElement, tMs: number): boolean {
+  analyse(video: HTMLVideoElement, tMs: number, tag = 0): boolean {
     if (this.free.length === 0) return false
     const gl = this.gl
     const t0 = performance.now()
@@ -165,6 +171,7 @@ export class GridPass {
     // Submit now, so the fence can signal while this thread does other work.
     gl.flush()
     slot.tMs = tMs
+    slot.tag = tag
     slot.startedAt = t0
     slot.issueMs = performance.now() - t0
     this.inFlight.push(slot)
@@ -200,6 +207,7 @@ export class GridPass {
       info.issueMs = slot.issueMs
       info.readyAt = c1
       info.copyMs = c1 - c0
+      info.tag = slot.tag
       n++
       onGrid(this.grid, info)
     }
@@ -246,40 +254,4 @@ export class GridPass {
     slot.sync = null
     this.free.push(slot)
   }
-}
-
-function setNearestClamp(gl: WebGL2RenderingContext): void {
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-}
-
-function compile(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
-  const shader = gl.createShader(type)
-  if (!shader) throw new Error('createShader failed')
-  gl.shaderSource(shader, source)
-  gl.compileShader(shader)
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const log = gl.getShaderInfoLog(shader)
-    gl.deleteShader(shader)
-    throw new Error(`shader compile failed: ${log}`)
-  }
-  return shader
-}
-
-function linkProgram(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
-  const program = gl.createProgram()
-  gl.attachShader(program, compile(gl, gl.VERTEX_SHADER, vs))
-  gl.attachShader(program, compile(gl, gl.FRAGMENT_SHADER, fs))
-  gl.linkProgram(program)
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    throw new Error(`program link failed: ${gl.getProgramInfoLog(program)}`)
-  }
-  return program
-}
-
-function checkError(gl: WebGL2RenderingContext, where: string): void {
-  const error = gl.getError()
-  if (error !== gl.NO_ERROR) throw new Error(`WebGL error 0x${error.toString(16)} in ${where}`)
 }

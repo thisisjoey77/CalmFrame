@@ -28,7 +28,17 @@ export const IPC = {
   /** overlay -> main -> debug: the Pass A startup self-test result. */
   gridSelfTest: 'grid-self-test',
   /** overlay -> main: the GPU pipeline or detector failed. Main fails open. */
-  pipelineError: 'pipeline-error'
+  pipelineError: 'pipeline-error',
+  /** overlay -> main -> debug: the Passes B and C startup self-test result. */
+  smoothSelfTest: 'smooth-self-test',
+  /** overlay -> main: the renderer is alive, every HEARTBEAT_MS. The watchdog's input. */
+  heartbeat: 'heartbeat',
+  /** overlay -> main -> debug: the overlay state machine changed state. */
+  stateChange: 'state-change',
+  /** main -> overlay: protection switched on or off (kill switch, watchdog, failure). */
+  protection: 'protection',
+  /** main -> overlay: debug only, block the renderer's main thread for this many ms. */
+  debugFreeze: 'debug-freeze'
 } as const
 
 export interface CaptureSize {
@@ -89,6 +99,44 @@ export interface GridSelfTestResult {
   detail: string
 }
 
+/** Passes B and C startup self-test: round trip through the half-float state, and one
+ *  filter step with dim, desaturation and opacity against the CPU twin. In 8-bit codes. */
+export interface SmoothSelfTestResult {
+  pass: boolean
+  roundTripMaxDiff: number
+  stepMaxDiff: number
+  detail: string
+}
+
+/** Sent every HEARTBEAT_MS from a timer in the overlay renderer. Its arrival is what the
+ *  watchdog checks; the contents are for logs and, later, the dashboard status. */
+export interface Heartbeat {
+  /** The overlay state machine, or 'off' when the pipeline has failed open. */
+  state: OverlayStateName | 'off'
+  /** Time since the last captured frame arrived, or null before the first. */
+  frameAgeMs: number | null
+}
+
+/** The overlay state machine changed state ("On fast, off slow"). */
+export interface StateChange {
+  /** Capture timestamp of the frame that caused it, on the overlay's clock, or the time of
+   *  the call for a switch from main. */
+  tMs: number
+  wallMs: number
+  from: OverlayStateName
+  to: OverlayStateName
+  /** What the overlay does from this frame on. */
+  alpha: number
+  dim: number
+  opacity: number
+  red: boolean
+  /** Why, in a few words. */
+  reason: string
+  /** The detection on that frame. */
+  frequencyHz: number
+  flashSize: number
+}
+
 /** Median and 95th percentile of a duration over recent frames, in ms. Null when empty. */
 export interface Timing {
   median: number | null
@@ -110,8 +158,25 @@ export interface DetectionStats {
   flashSize: number
   areaFraction: number
   hotCells: number
-  /** Overlay state machine. Phase 3 only reports it; Phase 4 acts on it. */
+  /** Overlay state machine. */
   state: OverlayStateName
+  /** What the overlay is doing now (state machine output), and whether it is drawn. */
+  smoothing: { alpha: number; dim: number; opacity: number; red: boolean; drawn: boolean }
+  /** The viewer check (src/core/viewerCheck.ts): the detector run on what the viewer sees
+   *  while the overlay is drawn. */
+  viewer: {
+    checking: boolean
+    /** Largest graph value of the seen picture since the last stats message. */
+    graphValue: number
+    /** Residual swing of the seen picture now, or null (see ViewerCheckResult). */
+    residual: number | null
+    /** Over the latest drawn episode. These persist after the overlay goes. */
+    episodePeakGraph: number
+    episodeFlagged: boolean
+    /** Residual swing on the last frame of the episode where the detector still saw the
+     *  hazard underneath: the steady state at the end of the strobe. */
+    episodeResidual: number | null
+  }
   /** Main-thread analysis cost per frame (the Phase 3 budget), and the medians of its
    *  parts: issue (upload, Pass A, start the read-back), copy (the finished grid out of
    *  its buffer) and detector (with the state machine). */
@@ -119,10 +184,16 @@ export interface DetectionStats {
   issueMedianMs: number | null
   copyMedianMs: number | null
   detectorMedianMs: number | null
+  /** Main-thread cost of the smoothing, medians: Pass B issue (every frame), Pass C issue
+   *  (only while drawn) and the viewer check (CPU). */
+  smoothMedianMs: number | null
+  drawMedianMs: number | null
+  viewerMedianMs: number | null
   /** Latency per stage, from each frame's capture timestamp. Chromium stamps captureTime
    *  late (Phase 0), so the first stage and the total are understated, and nothing here
    *  sees the compositor or the display: the slow-motion footage is the end-to-end truth.
-   *  Phase 4 adds decision -> overlay drawn. */
+   *  The grid wait and the total are over frames analysed while the overlay was not
+   *  drawn; whileDrawn has the same for frames analysed while it was. */
   latency: {
     captureToCallback: Timing
     /** Upload, Pass A, the GPU queue and the read-back. */
@@ -130,8 +201,20 @@ export interface DetectionStats {
     /** Detector and state machine. */
     gridToDecision: Timing
     captureToDecision: Timing
+    /** From the decision to the GPU finishing Pass C in the overlay canvas. The compositor
+     *  and the display add more, which only the slow-motion footage sees. */
+    decisionToDrawn: Timing
+    captureToDrawn: Timing
   }
-  /** Frames skipped because every read-back slot was still busy (the GPU was behind). */
+  /** Frames analysed while the overlay was drawn: the cost of drawing to detection. */
+  whileDrawn: {
+    callbackToGrid: Timing
+    captureToDecision: Timing
+    busySkips: number
+    frames: number
+  }
+  /** Frames skipped because every read-back slot was still busy (the GPU was behind),
+   *  while the overlay was not drawn. */
   busySkips: number
   framesAnalysed: number
 }
@@ -166,6 +249,11 @@ export interface CalmFrameApi {
   sendHazardEvent(event: HazardEvent): void
   sendGridSelfTest(result: GridSelfTestResult): void
   sendPipelineError(message: string): void
+  sendSmoothSelfTest(result: SmoothSelfTestResult): void
+  sendHeartbeat(heartbeat: Heartbeat): void
+  sendStateChange(change: StateChange): void
+  onProtection(callback: (enabled: boolean, reason: string) => void): void
+  onDebugFreeze(callback: (ms: number) => void): void
   // debug window
   runSelfCheck(): void
   restartCapture(size: CaptureSize): void
@@ -176,4 +264,6 @@ export interface CalmFrameApi {
   onDetectionStats(callback: (stats: DetectionStats) => void): void
   onHazardEvent(callback: (event: HazardEvent) => void): void
   onGridSelfTest(callback: (result: GridSelfTestResult) => void): void
+  onSmoothSelfTest(callback: (result: SmoothSelfTestResult) => void): void
+  onStateChange(callback: (change: StateChange) => void): void
 }

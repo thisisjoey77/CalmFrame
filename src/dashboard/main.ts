@@ -1,5 +1,5 @@
-// Debug window: Phase 0 capture tools plus Phase 3 live detection. Phase 5 replaces it
-// with the real dashboard.
+// Debug window: Phase 0 capture tools, Phase 3 live detection and Phase 4 smoothing.
+// Phase 5 replaces it with the real dashboard.
 import {
   ANALYSIS_BUDGET_MS,
   CAPTURE_FPS,
@@ -7,6 +7,7 @@ import {
   CAPTURE_MAX_HEIGHT,
   DEBUG_CAPTURE_SIZES,
   DEBUG_HAZARD_LOG_MAX,
+  LUMINANCE_THRESHOLD,
   PHASE0_MIN_FPS
 } from '../shared/config'
 import type {
@@ -14,6 +15,7 @@ import type {
   DetectionStats,
   HazardEvent,
   SelfCheckResult,
+  StateChange,
   Timing
 } from '../shared/messages'
 import { openScreenStream } from '../overlay/capture'
@@ -164,7 +166,7 @@ graph.draw()
 
 const stateText: Record<DetectionStats['state'], string> = {
   safe: 'Safe',
-  active: 'Active (Phase 4 will smooth here)',
+  active: 'Active (smoothing)',
   release: 'Release (fading out)',
   disabled: 'Disabled'
 }
@@ -200,7 +202,64 @@ api.onDetectionStats((s: DetectionStats) => {
   setCell('t-grid', timingText(s.latency.callbackToGrid))
   setCell('t-decision', timingText(s.latency.gridToDecision))
   setCell('t-total', timingText(s.latency.captureToDecision))
-  setCell('t-skips', `${s.busySkips} of ${s.framesAnalysed + s.busySkips}`)
+  setCell('t-drawn', timingText(s.latency.decisionToDrawn))
+  setCell('t-total-drawn', timingText(s.latency.captureToDrawn))
+  const w = s.whileDrawn
+  setCell(
+    't-skips',
+    `${s.busySkips + w.busySkips} of ${s.framesAnalysed + s.busySkips + w.busySkips}`
+  )
+  setCell(
+    't-smooth',
+    `pass B ${ms(s.smoothMedianMs, 2)} (every frame), pass C ${ms(s.drawMedianMs, 2)} (while drawn), viewer check ${ms(s.viewerMedianMs, 2)}`
+  )
+
+  // Drawn vs not drawn: the Phase 3 question for Phase 4.
+  const idleFrames = s.framesAnalysed - w.frames
+  setCell('c-grid-idle', timingText(s.latency.callbackToGrid))
+  setCell('c-grid-drawn', timingText(w.callbackToGrid))
+  setCell('c-total-idle', timingText(s.latency.captureToDecision))
+  setCell('c-total-drawn', timingText(w.captureToDecision))
+  setCell('c-skips-idle', `${s.busySkips} of ${idleFrames + s.busySkips}`)
+  setCell('c-skips-drawn', `${w.busySkips} of ${w.frames + w.busySkips}`)
+
+  const sm = s.smoothing
+  setCell(
+    'd-smoothing',
+    `α ${sm.alpha.toFixed(3)}, d ${sm.dim.toFixed(2)}, opacity ${sm.opacity.toFixed(2)}${sm.red ? ', red desaturation' : ''}, ${sm.drawn ? 'drawn' : 'not drawn'}`,
+    sm.drawn ? 'warn' : undefined
+  )
+  const v = s.viewer
+  if (v.checking) {
+    const residual =
+      v.residual === null ? 'residual after 1 s' : `residual ${v.residual.toFixed(3)}`
+    const over = v.residual !== null && v.residual >= LUMINANCE_THRESHOLD
+    setCell(
+      'd-viewer',
+      `graph ${v.graphValue.toFixed(1)}/s, ${residual} (threshold ${LUMINANCE_THRESHOLD})`,
+      over || v.graphValue > 0 ? 'bad' : 'ok'
+    )
+  } else {
+    setCell('d-viewer', 'overlay not drawn (the raw screen)')
+  }
+  if (v.episodePeakGraph > 0 || v.episodeResidual !== null || v.episodeFlagged) {
+    const residual =
+      v.episodeResidual === null ? 'no residual yet' : `residual ${v.episodeResidual.toFixed(3)}`
+    setCell(
+      'd-episode',
+      `peak graph ${v.episodePeakGraph.toFixed(1)}/s, ${v.episodeFlagged ? 'FLAGGED' : 'never flagged'}, ${residual} at the end of the hazard`,
+      v.episodeFlagged ? 'bad' : 'ok'
+    )
+  }
+})
+
+api.onSmoothSelfTest((r) => {
+  setCell(
+    'd-smoothtest',
+    r.pass ? 'PASS: linear light, half-float state, right way up' : 'FAIL: protection is off',
+    r.pass ? 'ok' : 'bad'
+  )
+  $('d-smoothtest-detail').textContent = r.detail
 })
 
 api.onGridSelfTest((r) => {
@@ -222,19 +281,31 @@ function clock(wallMs: number): string {
 const hazardLog = $('hazard-log')
 let hazardLogEmpty = true
 
-api.onHazardEvent((e: HazardEvent) => {
+function logLine(text: string, title: string): void {
   if (hazardLogEmpty) {
     hazardLog.textContent = ''
     hazardLogEmpty = false
   }
+  const li = document.createElement('li')
+  li.textContent = text
+  li.title = title
+  hazardLog.prepend(li)
+  while (hazardLog.childElementCount > DEBUG_HAZARD_LOG_MAX) hazardLog.lastElementChild?.remove()
+}
+
+api.onHazardEvent((e: HazardEvent) => {
   const values = `${e.type}, ${e.frequencyHz.toFixed(1)} Hz, ΔL ${e.flashSize.toFixed(2)}, area ${e.areaFraction.toFixed(2)}`
   const line =
     e.kind === 'start'
       ? `START ${clock(e.wallMs)}  ${values}`
       : `END   ${clock(e.wallMs)}  after ${((e.durationMs ?? 0) / 1000).toFixed(2)} s, peaks ${values}, ${e.graphValue.toFixed(1)}/s`
-  const li = document.createElement('li')
-  li.textContent = line
-  li.title = `capture timestamp ${e.tMs.toFixed(1)} ms`
-  hazardLog.prepend(li)
-  while (hazardLog.childElementCount > DEBUG_HAZARD_LOG_MAX) hazardLog.lastElementChild?.remove()
+  logLine(line, `capture timestamp ${e.tMs.toFixed(1)} ms`)
+})
+
+api.onStateChange((c: StateChange) => {
+  const red = c.red ? ', red' : ''
+  logLine(
+    `STATE ${clock(c.wallMs)}  ${c.from} → ${c.to} (${c.reason}): α ${c.alpha.toFixed(3)}, d ${c.dim.toFixed(2)}, opacity ${c.opacity.toFixed(2)}${red}`,
+    `capture timestamp ${c.tMs.toFixed(1)} ms`
+  )
 })
