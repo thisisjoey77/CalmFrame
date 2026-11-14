@@ -63,6 +63,17 @@ The spec says to start a fresh session for each phase, across two laptops. Entir
 - **Ask first.** Commands the CLI marks as user-owned (`enable`, `configure`, `login`, `repo`, `project`, `org`) are for the user to run. Suggest them; don't run them unless asked.
 - **Transcripts are uploaded with checkpoints.** Never put secrets, tokens or personal details in prompts or commits.
 
+### Going for the prize: make the Entire story visible
+
+We don't know the judging criteria yet (ask at the Saturday 4:30 PM MLH workshop, then update this section). Until then, aim for a history a judge can browse and a demo moment that shows it off:
+
+- **Trails carry the plan.** Each phase's trail body states the goal and pastes that phase's checklist from the spec. When the checklist is ticked, mark the trail ready and merge through it rather than with a bare `git merge` (check `entire agent-help trail ready` and `entire agent-help trail merge` first).
+- **Commit messages name the spec item they satisfy.** For example, "Phase 1: early mode fires on the third fast transition". Then `entire why <file>:<line>` goes from any line of the detector to the prompt, the session and the spec checkbox behind it. That makes a 20-second pitch moment: "every line traces back to the standard and the session that wrote it".
+- **Log the moments Entire paid off.** When `entire search` or `entire why` changes what you do, add one line to `docs/ENTIRE-LOG.md`: date, laptop, query, what it changed. This is the evidence for the write-up, so keep it honest and don't pad it.
+- **Before submission (Saturday night):**
+  - Run `entire recap --week --static` and `entire dispatch` to draft the Devpost "How we built it" section.
+  - Add a "Built with Entire" section to the README that links each phase's trail.
+
 ### Setting up the Mac (once)
 
 1. Install the Entire CLI (https://docs.entire.com/installation), then run `entire login`. The repo owner grants access with `entire project grant add calmframe <provider>:<handle> --role writer`.
