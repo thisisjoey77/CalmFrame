@@ -19,7 +19,7 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 
 ## Commands
 
-- `npm run dev`: run the app (Phase 3 state: the overlay is invisible and runs live detection, and the debug window shows the graph, timings and hazard log; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits; the debug window's "Ignore movement" box switches the Step 5a concurrency rule off and on, and off is the fallback to the detector as first specified)
+- `npm run dev`: run the app (Phase 4 state: the overlay runs live detection, stays invisible until a hazard and then shows the smoothed copy, and the debug window shows the graph, timings and hazard log; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits; the debug window's "Ignore movement" box switches the Step 5a concurrency rule off and on, and off is the fallback to the detector as first specified)
 - `CALMFRAME_DEBUG_TINT=1 npm run dev`: also shows the Phase 0 red tint on the overlay and runs the automatic capture-leak check
 - `CALMFRAME_FPS_SWEEP=1 npm run dev`: measures the capture frame rate at each size cap with a moving test bar and logs a summary. Use it to check the demo-laptop setup.
 - `npm test`: Vitest, run once (`npm run test:watch` to watch)
@@ -106,6 +106,19 @@ The challenge requires that we build, test and collaborate in Coder workspaces. 
 
 - Nobody with known or suspected photosensitivity runs strobe tests. Use low-contrast test flashes by default, in short bursts, in a small window.
 - In the README, Devpost, the UI and the pitch, never say "prevents seizures", "certified", "WCAG compliant" or "validated by EA". Say "reduces exposure", "implements the WCAG flash thresholds" and "compared against IRIS (Python port)".
+
+## Decisions already made (do not undo without asking the user)
+
+These were settled with the user on Sat Nov 14 after testing on the real screen. The spec has the reasoning and the numbers. If a later phase seems to need one changed, stop and ask.
+
+- **The concurrency rule (spec Step 5a) is on by default.** Without it, scrolling, dragging and opening windows switched the overlay on constantly. A reversal only counts when a quarter of an area window reverses the same way in the same captured frame. See "Movement false triggers" in the spec and `src/core/motion.test.ts`.
+  - **Keep the fallback reachable.** `concurrency: 'off'` is the detector as first specified, and the user asked for a switch back to it. Today it is the debug window's "Ignore movement" box. Phase 5 replaces the debug window, so it must carry the switch over.
+  - **Do not loosen `CONCURRENCY_MAX_OPPOSING` (0.25).** At 0.35 and above, 3,000 px/s scrolling triggers again.
+- **Some false triggers are accepted for now.** Very fast scrolling, fast camera turns in games, a tab switch that repaints three times, and lightning in video still trigger. The next lever is N = 4 on the Phase 5 sensitivity slider. A check for "the new frame is the old one shifted" was discussed and not built. Do not weaken the early trigger or the area rule to hide these.
+- **The smoothing target is 0.07** (`TARGET_RESIDUAL`). At 0.08 one live reading was over WCAG's 0.10. The user chose 0.07 over 0.06 to keep motion trails shorter.
+- **The dashboard sits above the overlay and is excluded from capture** (Phase 5 checklist).
+- **The pre-arm (spec Step 7a, a teammate's work) stays off** (`PREARM_ENABLED = false`) unless the user asks for it.
+- **Stretch ideas wait for the Saturday 6 PM gate, one at most:** smoothing only the flashing region (the spec's stretch), or a friend's proposal to correct brightness per region on the current frame without blending old frames. A native capture module is not planned for this weekend.
 
 ## Open questions
 

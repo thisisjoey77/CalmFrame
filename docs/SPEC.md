@@ -688,6 +688,7 @@ Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Cod
 - [ ] Event log lines such as "0:42, 8 Hz, 2.1 s, smoothed".
 - [ ] Sensitivity slider, on/off switch, events-mitigated counter, tray icon with a menu.
 - [ ] A warning when capture drops below 45 fps.
+- [ ] The Step 5a "Ignore movement" switch moves from the debug window to the dashboard, on by default, so the fallback to the detector as first specified stays one click away.
 
 ### Phase 6: measure and validate (D, Saturday 1:00 to 6:00 PM)
 
@@ -962,6 +963,7 @@ Read docs/SPEC.md. We are doing "Phase 5: dashboard and controls". Replace the d
 - Everything listed under Phase 5, plus a small "protected preview" pane showing the smoothed output, because screen recorders cannot see the overlay.
 - The dashboard window is set always-on-top after the overlay, at the same level, with content protection on, as the debug window's stacking checkbox does today. Nothing in it is smoothed, so nothing in it may flash over a hazardous area.
 - The raw thumbnail is drawn from the 96x54 grid, capped at 240x135, and labelled "Raw input (unprotected)".
+- Carry over what the debug window does that is still needed: the Step 5a "Ignore movement" switch (on by default; off is the fallback detector) and the hidden freeze shortcut for the watchdog test. Read "Decisions already made" in CLAUDE.md before changing any detector default.
 - Design goals: calm, legible at arm's length on a demo table, one large status indicator, high-contrast text, fully usable from the keyboard, no animation beyond the graph.
 - The status must be derived from the heartbeat, never from a stored flag.
 - Settings persist across restarts.
