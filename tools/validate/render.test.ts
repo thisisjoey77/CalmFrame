@@ -11,6 +11,7 @@ import { drawText, hasGlyph, newCanvas, textWidth } from './draw'
 import { defaultOutput, parseRenderArgs, reportText } from './render'
 import {
   ClipRenderer,
+  INFO_LEVELS,
   LAYOUT_NAMES,
   describeLimit,
   describeSettings,
@@ -164,9 +165,28 @@ describe('offline render: layouts and words', () => {
     expect(layoutFor('protected-only').text).toBeNull()
   })
 
+  it('writes only the labels and the graph into the picture unless asked for the words', () => {
+    for (const name of ['big-small', 'equal'] as const) {
+      const plain = layoutFor(name)
+      expect(plain.text?.details).toBeNull()
+      expect(layoutFor(name, 'graph')).toEqual(plain)
+      const full = layoutFor(name, 'full')
+      expect(full.text?.details).not.toBeNull()
+      // Either way the graph stays inside the frame, clear of the pictures.
+      for (const l of [plain, full]) {
+        const g = l.text?.graph as { x: number; y: number; w: number; h: number }
+        expect(g.x + g.w).toBeLessThanOrEqual(l.width)
+        expect(g.y + g.h).toBeLessThanOrEqual(l.height)
+        expect(g.y).toBeGreaterThanOrEqual((l.originalPane?.y ?? 0) + (l.originalPane?.h ?? 0))
+      }
+    }
+  })
+
   it('draws every layout without throwing', () => {
-    for (const name of LAYOUT_NAMES) {
-      const l = layoutFor(name)
+    for (const [name, info] of LAYOUT_NAMES.flatMap((n) =>
+      INFO_LEVELS.map((i) => [n, i] as const)
+    )) {
+      const l = layoutFor(name, info)
       const renderer = new ClipRenderer(l, DEFAULT_SETTINGS, 30, 1)
       const frame = new Uint8Array(l.protectedPane.w * l.protectedPane.h * 4).fill(128)
       expect(renderer.frame(frame)).toHaveLength(RENDER_WIDTH * RENDER_HEIGHT * 4)
@@ -223,6 +243,7 @@ describe('offline render: the command line', () => {
       file: 'clip.mp4',
       out: null,
       layout: 'big-small',
+      info: 'graph',
       delayFrames: 1,
       fps: null,
       startS: null,
@@ -272,6 +293,7 @@ describe('offline render: the command line', () => {
       durationS: 20,
       out: 'demo.mp4'
     })
+    expect(parseRenderArgs(['clip.mp4', '--info', 'full']).info).toBe('full')
     expect(parseRenderArgs(['clip.mp4', '--sensitivity', '4']).settings.sensitivity).toEqual({
       trigger: 'early',
       streakN: 4
@@ -289,6 +311,7 @@ describe('offline render: the command line', () => {
       ['clip.mp4', '--flash-limit', '2'],
       ['clip.mp4', '--flash-limit', '4.5'],
       ['clip.mp4', '--layout', 'triple'],
+      ['clip.mp4', '--info', 'everything'],
       ['clip.mp4', '--delay-frames', '9'],
       ['clip.mp4', '--fps', '120'],
       ['clip.mp4', '--start', '-1']

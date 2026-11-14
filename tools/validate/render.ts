@@ -16,6 +16,9 @@
  *   --flash-limit 3..10            the flash limit, per second (3, the WCAG limit)
  * and how to draw it:
  *   --layout big-small|equal|protected-only   (big-small)
+ *   --info graph|full              what is written into the picture besides the two labels:
+ *                                  the graph alone (default), or also the status, the
+ *                                  settings used and a line saying it is an offline render
  *   --delay-frames 0..6            frames the overlay's picture is late (1)
  *   --fps N                        (the source's, at most 60)
  *   --start S, --duration S        render part of the file, in seconds
@@ -46,17 +49,19 @@ import {
 import { FrameWriter, findFfmpeg, probeFps, readFrames } from './ffmpeg'
 import {
   ClipRenderer,
+  INFO_LEVELS,
   LAYOUT_NAMES,
   describeLimit,
   describeSettings,
   layoutFor,
+  type InfoLevel,
   type LayoutName,
   type RenderSummary
 } from './renderer'
 
 export const USAGE = `usage: render <video> [--out file.mp4]
   [--sensitivity 2|3|4|strict] [--ignore-movement on|off] [--keep-motion-sharp on|off]
-  [--flash-limit ${FLASH_LIMIT_MIN}..${FLASH_LIMIT_MAX}] [--layout ${LAYOUT_NAMES.join('|')}]
+  [--flash-limit ${FLASH_LIMIT_MIN}..${FLASH_LIMIT_MAX}] [--layout ${LAYOUT_NAMES.join('|')}] [--info ${INFO_LEVELS.join('|')}]
   [--delay-frames 0..${RENDER_MAX_DELAY_FRAMES}] [--fps N] [--start seconds] [--duration seconds]`
 
 export interface RenderArgs {
@@ -64,6 +69,7 @@ export interface RenderArgs {
   out: string | null
   settings: Settings
   layout: LayoutName
+  info: InfoLevel
   delayFrames: number
   fps: number | null
   startS: number | null
@@ -77,6 +83,7 @@ const FLAGS = new Set([
   '--keep-motion-sharp',
   '--flash-limit',
   '--layout',
+  '--info',
   '--delay-frames',
   '--fps',
   '--start',
@@ -163,6 +170,10 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
   if (!LAYOUT_NAMES.includes(layout as LayoutName)) {
     throw new Error(`--layout takes one of ${LAYOUT_NAMES.join(', ')}, got "${layout}"`)
   }
+  const info = values.get('--info') ?? 'graph'
+  if (!INFO_LEVELS.includes(info as InfoLevel)) {
+    throw new Error(`--info takes one of ${INFO_LEVELS.join(', ')}, got "${info}"`)
+  }
   const delay = values.get('--delay-frames')
   const fps = values.get('--fps')
   const start = values.get('--start')
@@ -172,6 +183,7 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
     out: values.get('--out') ?? null,
     settings,
     layout: layout as LayoutName,
+    info: info as InfoLevel,
     delayFrames:
       delay === undefined
         ? RENDER_DEFAULT_DELAY_FRAMES
@@ -235,7 +247,7 @@ async function main(argv: string[]): Promise<void> {
     console.warn(`[render] could not read the frame rate; using ${fps} fps (set --fps to choose)`)
   }
 
-  const layout = layoutFor(args.layout)
+  const layout = layoutFor(args.layout, args.info)
   const renderer = new ClipRenderer(layout, args.settings, fps, args.delayFrames)
   const writer = new FrameWriter(ffmpeg, out, layout.width, layout.height, fps, RENDER_CRF)
   const frames = readFrames(ffmpeg, file, {

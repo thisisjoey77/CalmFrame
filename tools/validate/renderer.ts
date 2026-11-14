@@ -68,16 +68,24 @@ export interface Layout {
   /** The original picture, `shrink` times smaller than the protected one, or null. */
   originalPane: Rect | null
   shrink: number
-  /** Labels, status, graph and footer, or null for a clean picture. Text positions are the
-   *  top-left corner of the first line. */
+  /** The labels over the pictures and the graph, or null for a picture with nothing on it.
+   *  `details` adds the words: the status lines, the settings used and the line saying the
+   *  footage is an offline render. Text positions are the top-left corner of the first line. */
   text: {
     labelY: number
-    status: { x: number; y: number }
-    settings: { x: number; y: number }
     graph: Rect
-    footer: { x: number; y: number }
+    details: {
+      status: { x: number; y: number }
+      settings: { x: number; y: number }
+      footer: { x: number; y: number }
+    } | null
   } | null
 }
+
+/** How much is written into the picture besides the two labels: 'graph' is the graph alone
+ *  (the default), 'full' adds the status, the settings and the offline-render line. */
+export type InfoLevel = 'graph' | 'full'
+export const INFO_LEVELS: readonly InfoLevel[] = ['graph', 'full']
 
 /**
  * The three layouts, for a RENDER_WIDTH x RENDER_HEIGHT frame.
@@ -86,7 +94,7 @@ export interface Layout {
  * - equal: the two side by side at the same size.
  * - protected-only: the protected picture alone, full frame, with no text, for editing.
  */
-export function layoutFor(name: LayoutName): Layout {
+export function layoutFor(name: LayoutName, info: InfoLevel = 'graph'): Layout {
   const width = RENDER_WIDTH
   const height = RENDER_HEIGHT
   if (name === 'protected-only') {
@@ -102,6 +110,22 @@ export function layoutFor(name: LayoutName): Layout {
   if (name === 'equal') {
     const w = width / 2
     const h = (w * 9) / 16
+    if (info === 'graph') {
+      // Labels, pictures and a wide graph under both, centred in the frame.
+      const y = 180
+      return {
+        width,
+        height,
+        protectedPane: { x: 0, y, w, h },
+        originalPane: { x: w, y, w, h },
+        shrink: 1,
+        text: {
+          labelY: y - 50,
+          graph: { x: 40, y: y + h + 30, w: width - 80, h: 200 },
+          details: null
+        }
+      }
+    }
     const y = 200
     return {
       width,
@@ -111,31 +135,45 @@ export function layoutFor(name: LayoutName): Layout {
       shrink: 1,
       text: {
         labelY: y - 50,
-        status: { x: 40, y: y + h + 30 },
-        settings: { x: 40, y: y + h + 140 },
         graph: { x: w + 40, y: y + h + 30, w: w - 80, h: 150 },
-        footer: { x: 40, y: height - 80 }
+        details: {
+          status: { x: 40, y: y + h + 30 },
+          settings: { x: 40, y: y + h + 140 },
+          footer: { x: 40, y: height - 80 }
+        }
       }
     }
   }
   const w = (width * 2) / 3
   const h = (w * 9) / 16
-  const y = 150
+  // With the graph alone, the pictures sit in the middle of the frame and the graph fills
+  // the space under the small one, down to the bottom of the large one.
+  const y = info === 'graph' ? 205 : 150
   const small = { x: w, y, w: w / 2, h: h / 2 }
   const column = small.x + 20
+  const under = small.y + small.h
   return {
     width,
     height,
     protectedPane: { x: 0, y, w, h },
     originalPane: small,
     shrink: 2,
-    text: {
-      labelY: y - 50,
-      status: { x: column, y: small.y + small.h + 30 },
-      graph: { x: column, y: small.y + small.h + 140, w: small.w - 40, h: 150 },
-      settings: { x: column, y: small.y + small.h + 305 },
-      footer: { x: 20, y: y + h + 60 }
-    }
+    text:
+      info === 'graph'
+        ? {
+            labelY: y - 50,
+            graph: { x: column, y: under + 30, w: small.w - 40, h: y + h - (under + 30) },
+            details: null
+          }
+        : {
+            labelY: y - 50,
+            graph: { x: column, y: under + 140, w: small.w - 40, h: 150 },
+            details: {
+              status: { x: column, y: under + 30 },
+              settings: { x: column, y: under + 305 },
+              footer: { x: 20, y: y + h + 60 }
+            }
+          }
   }
 }
 
@@ -477,15 +515,12 @@ export class ClipRenderer {
     this.historyHazard[slot] = hazard ? 1 : 0
     const text = layout.text
     if (!text) return
-    const step = lineHeight(STATUS_SCALE)
-    this.line('status', `STATUS: ${on ? 'SMOOTHING' : 'PROTECTED'}`, text.status.x, text.status.y)
-    this.line(
-      'rate',
-      `FLASHES PER SECOND: ${graphValue.toFixed(1)}`,
-      text.status.x,
-      text.status.y + step
-    )
     this.drawGraph(text.graph, n)
+    const status = text.details?.status
+    if (!status) return
+    const step = lineHeight(STATUS_SCALE)
+    this.line('status', `STATUS: ${on ? 'SMOOTHING' : 'PROTECTED'}`, status.x, status.y)
+    this.line('rate', `FLASHES PER SECOND: ${graphValue.toFixed(1)}`, status.x, status.y + step)
   }
 
   /** The original frame, averaged down in linear light. */
@@ -577,11 +612,13 @@ export class ClipRenderer {
         COLORS.muted
       )
     }
+    const details = text.details
+    if (!details) return
     drawText(
       canvas,
       describeLimit(this.settings.flashLimit),
-      text.status.x,
-      text.status.y + 2 * lineHeight(STATUS_SCALE),
+      details.status.x,
+      details.status.y + 2 * lineHeight(STATUS_SCALE),
       STATUS_SCALE,
       COLORS.text
     )
@@ -589,8 +626,8 @@ export class ClipRenderer {
       drawText(
         canvas,
         words,
-        text.settings.x,
-        text.settings.y + i * lineHeight(SMALL_SCALE),
+        details.settings.x,
+        details.settings.y + i * lineHeight(SMALL_SCALE),
         SMALL_SCALE,
         COLORS.muted
       )
@@ -603,8 +640,8 @@ export class ClipRenderer {
       drawText(
         canvas,
         words,
-        text.footer.x,
-        text.footer.y + i * lineHeight(SMALL_SCALE),
+        details.footer.x,
+        details.footer.y + i * lineHeight(SMALL_SCALE),
         SMALL_SCALE,
         COLORS.muted
       )

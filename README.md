@@ -72,9 +72,9 @@ npm run render -- myclip.mp4 --sensitivity strict --flash-limit 5 --ignore-movem
 npm run render -- myclip.mp4 --layout equal --start 30 --duration 20 --out demo.mp4
 ```
 
-The options are the app's settings (`--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`), and the ones used are written into the picture. `--layout` is `big-small` (default), `equal` or `protected-only`. It needs the same ffmpeg as the validator above, and prints a short report of how many seconds were flagged before and after.
+The options are the app's settings (`--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`). `--layout` is `big-small` (default), `equal` or `protected-only`. The picture has the two labelled pictures and a flashes-per-second graph; `--info full` also writes in the status, the settings used and a line saying the footage is an offline render. It needs the same ffmpeg as the validator above, and prints a short report of how many seconds were flagged before and after.
 
-This is a simulation, not a recording of the live overlay, and the picture says so. As in the app, the first flash or two of each burst still gets through.
+This is a simulation, not a recording of the live overlay. Say so wherever the footage is shown. As in the app, the first flash or two of each burst still gets through.
 
 ## Limitations
 
