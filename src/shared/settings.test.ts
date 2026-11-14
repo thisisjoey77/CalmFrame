@@ -21,6 +21,19 @@ describe('settings (Phase 5)', () => {
     expect(DEFAULT_SETTINGS.dashboardBounds).toBeNull()
   })
 
+  it('defaults to the smoothing filter; "Keep motion sharp" is an opt-in (trail #10)', () => {
+    expect(DEFAULT_SETTINGS.mitigation).toBe('smooth')
+    expect(parseSettings({ mitigation: 'correct' }).mitigation).toBe('correct')
+    expect(parseSettings({ mitigation: 'sharpest' }).mitigation).toBe('smooth')
+    // A settings file saved before the option existed.
+    expect(parseSettings({ concurrency: 'off' }).mitigation).toBe('smooth')
+    const on = applySettingsPatch(DEFAULT_SETTINGS, { mitigation: 'correct' })
+    expect(on).toEqual({ ...DEFAULT_SETTINGS, mitigation: 'correct' })
+    expect(applySettingsPatch(on, { mitigation: true })).toEqual(on)
+    // It changes how a hazard is drawn, not what the detector looks for.
+    expect(detectorOptionsFor(on)).toEqual(detectorOptionsFor(DEFAULT_SETTINGS))
+  })
+
   it('has slider positions N = 2, 3, 4, then strict, and no pre-arm position', () => {
     expect(SENSITIVITY_POSITIONS).toEqual([
       { trigger: 'early', streakN: 2 },
@@ -38,6 +51,7 @@ describe('settings (Phase 5)', () => {
     const s = {
       sensitivity: { trigger: 'strict' as const },
       concurrency: 'off' as const,
+      mitigation: 'correct' as const,
       dashboardBounds: { x: 10, y: -20, width: 460, height: 700 }
     }
     expect(parseSettings(JSON.parse(JSON.stringify(s)))).toEqual(s)

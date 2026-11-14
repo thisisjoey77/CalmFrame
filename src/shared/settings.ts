@@ -1,6 +1,7 @@
 /**
  * The user's settings (docs/SPEC.md, Phase 5): the sensitivity slider, the "Ignore
- * movement" switch and where the dashboard sits. Main keeps them in a JSON file in the
+ * movement" switch, the experimental "Keep motion sharp" tick box (trail #10) and where the
+ * dashboard sits. Main keeps them in a JSON file in the
  * app's userData folder, so they persist across restarts.
  *
  * Protection itself is not a setting: it starts on at every launch. A switch left off by
@@ -15,12 +16,14 @@ import {
   DASHBOARD_MIN_HEIGHT,
   DASHBOARD_MIN_WIDTH,
   DEFAULT_CONCURRENCY_RULE,
+  DEFAULT_MITIGATION_METHOD,
   EARLY_TRIGGER_STREAK,
   SENSITIVITY_STREAK_STEPS,
   SLIDER_EXAMPLE_HZ,
   SLIDER_EXAMPLE_LATENCY_MS,
   STRICT_TRIGGER_COUNT,
-  type ConcurrencyRule
+  type ConcurrencyRule,
+  type MitigationMethod
 } from './config'
 
 /** One position of the sensitivity slider (Step 7): the early trigger at some N, or
@@ -38,6 +41,9 @@ export interface Settings {
   sensitivity: Sensitivity
   /** The Step 5a concurrency rule: 'one-way' is "Ignore movement" ticked. */
   concurrency: ConcurrencyRule
+  /** How a hazard is calmed: 'smooth' (the default), or 'correct' when "Keep motion sharp"
+   *  is ticked ("Stretch: correct brightness per region"). */
+  mitigation: MitigationMethod
   /** Where the dashboard was last left, in DIP. Null until it has been moved or resized. */
   dashboardBounds: WindowBounds | null
 }
@@ -57,6 +63,7 @@ export const DEFAULT_SENSITIVITY: Sensitivity = {
 export const DEFAULT_SETTINGS: Settings = {
   sensitivity: DEFAULT_SENSITIVITY,
   concurrency: DEFAULT_CONCURRENCY_RULE,
+  mitigation: DEFAULT_MITIGATION_METHOD,
   dashboardBounds: null
 }
 
@@ -87,6 +94,10 @@ function parseConcurrency(raw: unknown): ConcurrencyRule | null {
   return raw === 'one-way' || raw === 'off' ? raw : null
 }
 
+function parseMitigation(raw: unknown): MitigationMethod | null {
+  return raw === 'smooth' || raw === 'correct' ? raw : null
+}
+
 /** Window bounds from untrusted input, or null. Whether they are on a screen is for main
  *  to check against the displays. */
 export function parseBounds(raw: unknown): WindowBounds | null {
@@ -110,6 +121,7 @@ export function parseSettings(raw: unknown): Settings {
   return {
     sensitivity: parseSensitivity(r.sensitivity) ?? DEFAULT_SETTINGS.sensitivity,
     concurrency: parseConcurrency(r.concurrency) ?? DEFAULT_SETTINGS.concurrency,
+    mitigation: parseMitigation(r.mitigation) ?? DEFAULT_SETTINGS.mitigation,
     dashboardBounds: parseBounds(r.dashboardBounds)
   }
 }
@@ -123,6 +135,8 @@ export function applySettingsPatch(current: Settings, patch: unknown): Settings 
     next.sensitivity = parseSensitivity(patch.sensitivity) ?? current.sensitivity
   if ('concurrency' in patch)
     next.concurrency = parseConcurrency(patch.concurrency) ?? current.concurrency
+  if ('mitigation' in patch)
+    next.mitigation = parseMitigation(patch.mitigation) ?? current.mitigation
   if ('dashboardBounds' in patch) {
     next.dashboardBounds = parseBounds(patch.dashboardBounds) ?? current.dashboardBounds
   }

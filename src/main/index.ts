@@ -568,7 +568,7 @@ function installIpc(): void {
     logSafely(
       'settings',
       () =>
-        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}`
+        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}, mitigation ${after.mitigation}`
     )
     broadcastSettings(after)
   })
@@ -623,6 +623,14 @@ function installIpc(): void {
       'smooth self-test',
       () => `[smooth self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
     )
+    const correction = result.correction
+    if (correction) {
+      logSafely(
+        'correct self-test',
+        () =>
+          `[correct self-test] ${correction.pass ? 'PASS' : 'FAIL ("Keep motion sharp" will smooth instead)'}: ${correction.detail}`
+      )
+    }
   })
 
   ipcMain.on(IPC.stateChange, (_event, change: StateChange) => {
@@ -665,7 +673,7 @@ function installIpc(): void {
         `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
         `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
         `hot ${stats.hotCells}, rule ${stats.concurrency} (set aside ${stats.ignoredReversals}) | state ${stats.state}, alpha ${fmt(sm.alpha, 3)}, d ${fmt(sm.dim, 2)}, ` +
-        `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''} | ` +
+        `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''}, method ${sm.method} | ` +
         `seen: ${v.checking ? `graph ${fmt(v.graphValue, 1)}, residual ${fmt(v.residual, 3)}` : 'overlay not drawn'} | ` +
         `cost median ${fmt(stats.cost.median, 2)} ms, p95 ${fmt(stats.cost.p95, 2)} ms ` +
         `(issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}; ` +

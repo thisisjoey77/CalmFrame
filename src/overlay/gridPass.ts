@@ -10,7 +10,7 @@
  * synchronously.
  *
  * Passes B and C (smoothPass.ts) run on the same context and read the uploaded frame from
- * `source`.
+ * `source`. The experimental correction pass (correctPass.ts) also reads `gridTexture`.
  */
 
 import { GRID_CELLS, GRID_COLS, GRID_READBACK_SLOTS, GRID_ROWS } from '../shared/config'
@@ -65,7 +65,9 @@ export class GridPass {
 
   private readonly program: WebGLProgram
   private readonly vao: WebGLVertexArrayObject
-  private readonly gridTexture: WebGLTexture
+  /** The latest frame's grid on the GPU: linear RGB per cell, RGBA32F, texel row 0 the top
+   *  row of cells. The correction pass (correctPass.ts) reads it for the same frame. */
+  readonly gridTexture: WebGLTexture
   private readonly framebuffer: WebGLFramebuffer
   /** Read-backs in flight, oldest first, and the slots free for the next one. */
   private readonly inFlight: Slot[] = []

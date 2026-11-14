@@ -6,7 +6,7 @@
 import type { HazardType } from '../core/detector'
 import type { FlashEvent } from '../core/events'
 import type { OverlayStateName } from '../core/stateMachine'
-import type { ConcurrencyRule } from './config'
+import type { ConcurrencyRule, MitigationMethod } from './config'
 import type { Settings } from './settings'
 
 export const IPC = {
@@ -192,6 +192,17 @@ export interface SmoothSelfTestResult {
   roundTripMaxDiff: number
   stepMaxDiff: number
   detail: string
+  /** The experimental correction pass (trail #10), checked against its CPU twin. Its
+   *  failure does not fail the pipeline: "Keep motion sharp" then falls back to smoothing. */
+  correction?: CorrectSelfTestResult
+}
+
+/** Correction pass startup self-test: one corrected frame against the CPU twin
+ *  (src/core/regionCorrect.ts), in 8-bit codes. */
+export interface CorrectSelfTestResult {
+  pass: boolean
+  maxDiff: number
+  detail: string
 }
 
 /** Sent every HEARTBEAT_MS from a timer in the overlay renderer. Its arrival is what the
@@ -266,7 +277,16 @@ export interface DetectionStats {
   /** Overlay state machine. */
   state: OverlayStateName
   /** What the overlay is doing now (state machine output), and whether it is drawn. */
-  smoothing: { alpha: number; dim: number; opacity: number; red: boolean; drawn: boolean }
+  smoothing: {
+    alpha: number
+    dim: number
+    opacity: number
+    red: boolean
+    drawn: boolean
+    /** The method the overlay draws with now. 'smooth' although the setting says 'correct'
+     *  means the correction pass is not available (its self-test failed). */
+    method: MitigationMethod
+  }
   /** The viewer check (src/core/viewerCheck.ts): the detector run on what the viewer sees
    *  while the overlay is drawn. */
   viewer: {

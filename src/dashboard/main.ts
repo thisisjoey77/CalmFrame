@@ -131,7 +131,17 @@ const graph = new ScrollingGraph($<HTMLCanvasElement>('graph'), {
 graph.draw()
 window.addEventListener('resize', () => graph.draw())
 
+/** When the box was last changed. The overlay's reports from just before a change still
+ *  name the old method, so they are not held against the new setting. */
+let sharpChangedAt = -Infinity
+
 api.onDetectionStats((s) => {
+  const settled = performance.now() - sharpChangedAt > STATUS_REFRESH_MS
+  const unavailable = settled && keepSharp.checked && s.smoothing.method !== 'correct'
+  if (unavailable !== sharpUnavailable) {
+    sharpUnavailable = unavailable
+    describeSharp()
+  }
   graph.push(s.tMs, s.graphValue, s.hazard)
   if (!document.hidden) graph.draw()
 })
@@ -163,6 +173,21 @@ const slider = $<HTMLInputElement>('sensitivity')
 const sensitivityName = $('sensitivity-name')
 const sensitivityDesc = $('sensitivity-desc')
 const movement = $<HTMLInputElement>('ignore-movement')
+const keepSharp = $<HTMLInputElement>('keep-sharp')
+const sharpDesc = $('sharp-desc')
+const SHARP_HINT =
+  'Shows the current picture and steadies the brightness of each region, with no blending of ' +
+  'old frames. For testing: a thin rim can still flicker at a hard edge.'
+/** The overlay reports the method it draws with. If the box is ticked and it still says
+ *  smoothing, the new pass failed its startup check on this computer. */
+let sharpUnavailable = false
+
+function describeSharp(): void {
+  sharpDesc.textContent =
+    keepSharp.checked && sharpUnavailable
+      ? 'Not available: the new pass failed its startup check on this computer, so the usual smoothing is used.'
+      : SHARP_HINT
+}
 
 slider.max = String(SENSITIVITY_POSITIONS.length - 1)
 
@@ -206,6 +231,8 @@ function applySettings(s: Settings): void {
   slider.value = String(sensitivityPosition(s.sensitivity))
   describeSensitivity(s.sensitivity)
   movement.checked = s.concurrency === 'one-way'
+  keepSharp.checked = s.mitigation === 'correct'
+  describeSharp()
 }
 
 // 'input' while dragging only updates the words; 'change' (release, or each arrow key
@@ -218,6 +245,12 @@ slider.addEventListener('change', () => {
 })
 movement.addEventListener('change', () => {
   api.updateSettings({ concurrency: movement.checked ? 'one-way' : 'off' })
+})
+keepSharp.addEventListener('change', () => {
+  sharpChangedAt = performance.now()
+  sharpUnavailable = false
+  describeSharp()
+  api.updateSettings({ mitigation: keepSharp.checked ? 'correct' : 'smooth' })
 })
 api.onSettings(applySettings)
 

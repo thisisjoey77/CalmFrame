@@ -392,6 +392,49 @@ The 1.5 s hold is longer than the 1 s counting window, so the detector has fully
 
 Use the detector's hot mask, grown by two cells and blurred, as the overlay's opacity. Everything outside the mask stays live and sharp. Build it only after whole-screen smoothing is measured and working.
 
+Not built. An offline test of a close relative (smooth each pixel only as far as its region's mean is away from its running average) kept barely more detail than plain smoothing on an action clip, 0.54 against 0.51, because large flashes and large movement both cover most of the picture. See the next section for the numbers.
+
+### Stretch: correct brightness per region (experimental, trail #10)
+
+Added Sat Nov 14 as the one stretch, at the user's request and before the gate. It is a second way to draw a hazard, behind the dashboard's "Keep motion sharp" tick box. The smoothing filter above stays the default. Detection, the trigger, the state machine, α, d and the red desaturation are the same for both.
+
+The smoothing filter averages each pixel with its own past, so anything that moves leaves a trail. This method shows the current frame and changes only how bright each region is.
+
+- **Targets.** Each grid cell keeps a target T, the running average of its own mean G, per channel in linear light: T += α (G − T). It is the smoothing filter run on the 96×54 grid instead of on the pixels, with the same α, on every frame.
+- **Correction.** For each pixel, the region mean m and the target t are interpolated between the four nearest cell centres. Then, per channel:
+
+  ```latex
+  \text{out} = \begin{cases} x \cdot \dfrac{t}{m} & m \ge t \quad \text{(too bright: scale toward black)} \\[2mm] 1 - (1 - x)\,\dfrac{1 - t}{1 - m} & m < t \quad \text{(too dark: scale toward white)} \end{cases}
+  ```
+
+  Both are straight lines in x that send the region's mean to its target and keep the result inside 0 to 1, so nothing clips. A region already at its target is left exactly as it is. A plain gain alone could not lift a black phase, which is why the dark case scales toward white.
+- **Then as before:** multiply by d, desaturate for a red hazard, re-encode, draw at the state machine's opacity.
+
+**Same frame, no read-back.** The frame, its grid and the targets on the GPU always belong to one captured frame: Pass A uploads the frame and draws its grid, and the targets are updated at once, next to Pass B. A skipped frame skips all of them. A correction worked out from an older frame would let one full-contrast frame through at every reversal, which is still a flash.
+
+**What stays true.** At the scale of the grid, the output is the same as the smoothing filter's: each cell's mean lands on d · T, which is what the viewer check's grid twin already computes. So the viewer check, the residual number and the protected preview apply to both methods. They say nothing about what happens inside a cell.
+
+**What it gives up,** each pinned by a test in `src/core/regionCorrect.test.ts`:
+
+- **It steadies each region's mean, not each pixel.** Detail finer than a cell can still alternate. A one-pixel checkerboard that inverts passes through unchanged, as it does for the detector (Step 2). A cell is 20 px on the demo laptop, about 0.34° at 60 cm, while WCAG's exemption for fine balanced patterns stops at 0.1°.
+- **A hard edge keeps a flickering rim.** Where flashing content meets still content, a cell holds both and one correction cannot suit both. A rim about a cell wide on each side still swings by more than 0.10: the still side flickers in step with the flash, and the flashing side is only partly calmed. Two cells from the edge both are clean.
+
+**Offline test (Sat Nov 14).** Both methods were run through the real detector and state machine in a scratch prototype (not in the repo), on synthetic screens at 480×270 and 60 fps, and on a 2:37 anime battle clip at 640×360 and 30 fps on default settings. "Detail kept" is the correlation between the output's edges and the current frame's, where 1.0 is the current frame's own detail.
+
+| Test | Smoothing filter | Brightness correction |
+| --- | --- | --- |
+| Full-screen black and white strobe, leftover swing | 0.070 | 0.070 |
+| Hard-edged strobe patch on a still screen, pixels still swinging ≥ 0.10 | none | a rim: 0.39 of the WCAG area limit in one direction |
+| Clip: detail kept on the parts of the picture that change | 0.51 | 0.91 |
+| Clip: IRIS (Python port) on the output. The unmitigated clip fails, with 23 failing frames | passes, 14 warning frames | passes, 14 warning frames |
+| Clip: seconds our detector flags at the strict trigger. Unmitigated: 19 | 0 | 0 |
+
+A finer correction grid shrinks the rim (0.19 of the limit at 192×108) and keeps a little less detail (0.86). The app uses the detection grid, which is already on the GPU.
+
+**In the app.** `src/overlay/correctPass.ts` holds the targets in two 96×54 float textures and draws the corrected frame. A startup self-test checks it against the CPU twin: on the demo laptop the largest difference was 0.54 of an 8-bit code (limit 1). If the pass cannot start or fails that check, the tick box falls back to the smoothing filter and the dashboard says so. The targets are kept warm on every frame, whichever method draws, so ticking the box in the middle of a hazard switches cleanly.
+
+**Not yet checked on screen.** The numbers above are offline. How it looks at 1920×1080 and 60 fps, and how visible the rim is on real content, need the user's eyes: the low-contrast strobe page first, then real clips.
+
 ## Architecture
 
 CalmFrame is one Electron app with three windows and one hot loop. All per-frame work lives in the overlay window's renderer, so no frame ever crosses a process boundary and adds latency.
@@ -421,6 +464,8 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 6. Pass B: fold the frame into the smoothing state in a half-float texture, every frame. It runs in the frame callback right after Pass A's read-back is fenced, so it uses the α decided on the previous frame, never delays the read-back, and draws only offscreen, so it presents nothing (Phase 4 results).
 7. Pass C: after each decision, and only while the opacity is above 0, draw d · S, re-encoded for display, at the current opacity. When the opacity reaches 0, clear the canvas once and draw nothing more until the next hazard.
 8. Every third frame, send stats and the 96×54 thumbnail to the dashboard.
+
+With "Keep motion sharp" ticked (see "Stretch: correct brightness per region"), step 6 also folds the frame's grid into the per-cell targets, which it does on every frame anyway, and step 7 draws the corrected current frame instead of d · S.
 
 ### Overlay window requirements
 
@@ -460,6 +505,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Target residual ρ | 0.07 (0.08 until Phase 4) |
 | α range, warm α | 0.03 to 0.30, 0.25 |
 | Minimum dim d | 0.4 |
+| Mitigation method | The smoothing filter. Brightness correction per region is an opt-in tick box, "Keep motion sharp" (experimental) |
 | Hold, fade | 1.5 s, 0.75 s |
 | Heartbeat, watchdog | 250 ms, 750 ms |
 | Capture | 60 fps, full size with the native module; max 960×540 with Chromium's fallback (see Phase 0 results and "Native capture") |
@@ -478,10 +524,10 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   native/capture/      C++ screen capture module (Desktop Duplication into shared textures)
   src/main/            windows, tray, capture grant, native capture hand-over, settings, kill switch, watchdog
   src/preload/         contextBridge API between main and the renderers (from the template)
-  src/overlay/         capture, GPU pipeline, shaders, frame loop
+  src/overlay/         capture, GPU pipeline (grid, smoothing, brightness correction), shaders, frame loop
   src/dashboard/       graph, thumbnail, log, controls
   src/debug/           the Phase 0 to 4 debug window, behind CALMFRAME_DEBUG_WINDOW=1
-  src/core/            luminance, tracker, area, detector, filter math, state machine, tests
+  src/core/            luminance, tracker, area, detector, filter math, brightness correction, state machine, tests
   src/shared/          message types, config defaults
   tools/strobe/        strobe test page
   tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all)
@@ -773,6 +819,10 @@ The IRIS comparison ran overnight, unattended. The latency log came from the mor
 - **A reading of the detector** the CSV makes visible: with the extended-failure option on, the detector's `hazard` flag includes the extended failure. The validator's CSV reports the trigger and the extended rule as separate columns.
 - **IRIS's exit code is its verdict:** 0 pass, 1 fail, 2 pass with a warning, 3 error. The runner first treated 1 as an error.
 - **Still to do for this box:** three to five real clips (a music video with strobes, game footage, a talking-head negative), with their sources noted. They need someone to choose and source them.
+- **First real clip, not yet in the report (Sat Nov 14).** A 2:37 anime battle from YouTube ("Pokemon: Infernape vs Luxray", 1270×720 at 30 fps), supplied by the user and kept out of the repo.
+  - IRIS fails it at one moment, 2:19: near white to near black, then a 15 Hz flicker over more than half the frame, 9 transitions in the second. It also gives warnings in 17 other seconds.
+  - CalmFrame's WCAG setup flags 18 of the 157 seconds at the strict trigger, 2:19 among them, and 52 at the default trigger. With the Step 5a rule off, strict flags 86, so the rule removes most of them on real content too.
+  - **The IRIS-compatible setup flags nothing, so it misses the one second IRIS fails.** The Step 5a rule is why: with it off, that setup catches 2:19, but also flags 34 seconds IRIS passes. The 100% agreement above therefore holds for the 11 synthetic clips only. Say so wherever that figure is quoted. The app is not affected: it uses the WCAG area and catches 2:19 at every slider position.
 - **Tested in Coder without GitHub.** The overnight session could not push to the GitHub mirror, which needs the user's login. The branch went to the Coder workspace as a git bundle over `coder ssh` instead, and the suite ran there (`docs/CODER-LOG.md`).
 
 ### Native capture (stretch, Sat Nov 14 morning, trail #9)
@@ -802,6 +852,8 @@ Taken before the gate, at the user's request: Chromium's capture kept dipping un
 ### Gate: Saturday 6:00 PM
 
 If every box above is ticked, pick one stretch: regional smoothing (the visual win) or the Typesense hazard index (an extra prize). If any box is open, spend the evening closing it and polishing instead.
+
+**The one stretch is taken (Sat Nov 14, morning, trail #10):** brightness correction per region, as an experimental tick box that is off by default. The user asked for it before the gate, with the Phase 6 slow-motion box still open. See "Stretch: correct brightness per region" under "Mitigation math". Regional smoothing and the hazard index are not built.
 
 ### Phase 7: freeze and ship (everyone, Saturday 9:00 PM onward)
 
