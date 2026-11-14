@@ -2,13 +2,133 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>CalmFrame</title>
+    <title>CalmFrame debug</title>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 14px;
+      }
+      body {
+        margin: 0;
+        padding: 12px 16px;
+        background: Canvas;
+        color: CanvasText;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 13px;
+        margin: 14px 0 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        opacity: 0.7;
+      }
+      video {
+        width: 100%;
+        max-width: 480px;
+        background: #000;
+        display: block;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      td {
+        padding: 2px 12px 2px 0;
+        vertical-align: top;
+      }
+      td:first-child {
+        opacity: 0.75;
+      }
+      .ok {
+        color: #1a7f37;
+        font-weight: 600;
+      }
+      .bad {
+        color: #c62828;
+        font-weight: 600;
+      }
+      .warn {
+        color: #b26a00;
+        font-weight: 600;
+      }
+      button {
+        font: inherit;
+        padding: 4px 10px;
+      }
+      label {
+        display: block;
+        margin: 4px 0;
+      }
+      #selfcheck-detail {
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      .hint {
+        font-size: 12px;
+        opacity: 0.7;
+      }
+    </style>
   </head>
   <body>
+    <h1>CalmFrame debug: Phase 0 overlay spike</h1>
+
+    <h2>Live capture (this window's own low-rate copy)</h2>
+    <video id="preview" muted playsinline></video>
+    <label><input type="checkbox" id="preview-on" checked /> Preview on</label>
+
+    <h2>Overlay capture stats</h2>
+    <table>
+      <tr>
+        <td>Frame rate</td>
+        <td id="fps">waiting</td>
+      </tr>
+      <tr>
+        <td>Capture to callback</td>
+        <td id="delay">waiting</td>
+      </tr>
+      <tr>
+        <td>Frame size</td>
+        <td id="size">waiting</td>
+      </tr>
+      <tr>
+        <td>Applied settings</td>
+        <td id="settings">waiting</td>
+      </tr>
+      <tr>
+        <td>Skipped frames</td>
+        <td id="skipped">waiting</td>
+      </tr>
+      <tr>
+        <td>Overlay</td>
+        <td id="overlay">waiting</td>
+      </tr>
+    </table>
+
+    <h2>Capture size cap</h2>
+    <div id="sizes"></div>
+
+    <h2>Capture-leak self-check</h2>
+    <button id="selfcheck-run">Run self-check</button>
+    <span id="selfcheck-verdict">not run yet</span>
+    <div id="selfcheck-detail"></div>
+    <p class="hint">Pause any video first. Takes about 3 seconds; the tint blinks off and on.</p>
+
+    <h2>Stacking test</h2>
+    <label
+      ><input type="checkbox" id="on-top" /> Keep this window above the overlay and hide it from
+      capture</label
+    >
+
+    <p class="hint">Kill switch: Ctrl+Alt+Shift+C toggles the overlay.</p>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

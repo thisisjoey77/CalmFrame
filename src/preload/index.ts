@@ -1,12 +1,31 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { IPC, type CalmFrameApi } from '../shared/messages'
 
-// Custom APIs for renderer
-const api = {}
+const api: CalmFrameApi = {
+  sendCaptureStats: (stats) => ipcRenderer.send(IPC.captureStats, stats),
+  sendCaptureError: (message) => ipcRenderer.send(IPC.captureError, message),
+  sendSelfCheckResult: (result) => ipcRenderer.send(IPC.selfCheckResult, result),
+  onSelfCheckRun: (callback) => {
+    ipcRenderer.on(IPC.selfCheckRun, () => callback())
+  },
+  onCaptureRestart: (callback) => {
+    ipcRenderer.on(IPC.captureRestart, (_event, size) => callback(size))
+  },
+  runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
+  restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
+  setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),
+  onCaptureStats: (callback) => {
+    ipcRenderer.on(IPC.captureStats, (_event, stats) => callback(stats))
+  },
+  onSelfCheckResult: (callback) => {
+    ipcRenderer.on(IPC.selfCheckResult, (_event, result) => callback(result))
+  },
+  onOverlayState: (callback) => {
+    ipcRenderer.on(IPC.overlayState, (_event, state) => callback(state))
+  }
+}
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)

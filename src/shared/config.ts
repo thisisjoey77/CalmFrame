@@ -118,3 +118,54 @@ export const THUMBNAIL_MAX_HEIGHT = 135
 
 /** Global shortcut that moves to Disabled and hides the overlay. "Safety mechanisms". */
 export const KILL_SWITCH_ACCELERATOR = 'Control+Alt+Shift+C'
+
+// ---------------------------------------------------------------------------
+// Phase 0 spike and debug tooling (not product behaviour)
+// ---------------------------------------------------------------------------
+
+/** Opacity of the red tint the overlay shows during the Phase 0 spike. */
+export const DEBUG_TINT_OPACITY = 0.3
+/** Phase 0 pass bar for capture rate on moving content. */
+export const PHASE0_MIN_FPS = 50
+
+/** The debug window's own capture preview, kept small and slow so it barely loads the real capture. */
+export const DEBUG_PREVIEW_FPS = 15
+export const DEBUG_PREVIEW_MAX_WIDTH = 480
+
+/** Capture size caps the debug window can switch between, to find one that reaches 50 fps. */
+export const DEBUG_CAPTURE_SIZES: readonly { maxWidth: number; maxHeight: number }[] = [
+  { maxWidth: CAPTURE_MAX_WIDTH, maxHeight: CAPTURE_MAX_HEIGHT },
+  { maxWidth: 1280, maxHeight: 720 },
+  { maxWidth: 960, maxHeight: 540 }
+]
+/** FPS sweep (env CALMFRAME_FPS_SWEEP=1): wait before starting, then per size a warm-up
+ *  and a measuring period. */
+export const FPS_SWEEP_LEAD_MS = 10000
+export const FPS_SWEEP_WARMUP_MS = 3000
+export const FPS_SWEEP_MEASURE_MS = 9000
+/** Capture frame rate is counted over this rolling window. */
+export const FPS_WINDOW_MS = 1000
+/** Capture-delay median and 95th percentile are taken over this many recent frames. */
+export const DELAY_STATS_WINDOW = 120
+/** Main process logs capture stats to the terminal at most this often. */
+export const DEBUG_LOG_INTERVAL_MS = 1000
+
+/** Capture-leak self-check: toggle the tint off/on this many times. */
+export const SELF_CHECK_CYCLES = 3
+/** Wait after toggling the tint before sampling (protection applies on the next composition). */
+export const SELF_CHECK_SETTLE_MS = 300
+/** Samples of the captured frame per state, and their spacing. */
+export const SELF_CHECK_SAMPLES = 8
+export const SELF_CHECK_SAMPLE_INTERVAL_MS = 50
+/** Sampling canvas size; only the average colour matters. */
+export const SELF_CHECK_CANVAS_WIDTH = 64
+export const SELF_CHECK_CANVAS_HEIGHT = 40
+/** Red-ratio change (tint on minus off) that means the tint is in the capture. A leak of a
+ *  30% red tint moves it by about 0.08 on a white screen and more on darker ones. */
+export const SELF_CHECK_LEAK_DELTA = 0.03
+/** Red-ratio change below which a cycle counts as clean. */
+export const SELF_CHECK_CLEAN_DELTA = 0.01
+/** A sampled pixel is near black when all channels are at or below this (0..255). */
+export const SELF_CHECK_BLACK_LEVEL = 3
+/** The capture counts as a black rectangle when this share of pixels is near black. */
+export const SELF_CHECK_BLACK_FRACTION = 0.95
