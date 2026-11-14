@@ -477,6 +477,7 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   src/preload/         contextBridge API between main and the renderers (from the template)
   src/overlay/         capture, GPU pipeline, shaders, frame loop
   src/dashboard/       graph, thumbnail, log, controls
+  src/debug/           the Phase 0 to 4 debug window, behind CALMFRAME_DEBUG_WINDOW=1
   src/core/            luminance, tracker, area, detector, filter math, state machine, tests
   src/shared/          message types, config defaults
   tools/strobe/        strobe test page
@@ -689,6 +690,43 @@ Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Cod
 - [ ] Sensitivity slider, on/off switch, events-mitigated counter, tray icon with a menu.
 - [ ] A warning when capture drops below 45 fps.
 - [ ] The Step 5a "Ignore movement" switch moves from the debug window to the dashboard, on by default, so the fallback to the detector as first specified stays one click away.
+
+#### Phase 5 results (Sat Nov 14, Windows demo laptop, 1920×1080 at 150% scaling)
+
+The dashboard replaces the debug window. It is plain TypeScript and canvas, one narrow column at the top right of the screen (460×640 DIP at this scaling). The Windows checks below were run from outside the app. The dashboard is excluded from capture, so no screenshot tool can see it. Its layout was checked from a render of the page itself (`webContents.capturePage`).
+
+- **Above the overlay, out of the capture.** The dashboard is always on top at the overlay's level (`screen-saver`). It is raised again every time the overlay is shown, so it stays above it. Content protection is on. Win32 confirms the dashboard sits directly above the overlay in z-order, both windows are topmost, and both have display affinity `0x11` (`WDA_EXCLUDEFROMCAPTURE`). That held after the kill switch hid the overlay and showed it again.
+- **Status, derived from the heartbeat.** `src/shared/status.ts` is a pure function of the latest heartbeat and its age. Main relays each heartbeat with its own view of the overlay window. The dashboard and the tray re-derive the status every 250 ms, so silence alone turns it off. Every rule can only turn the status off:
+  - no heartbeat for 750 ms (the watchdog's limit)
+  - the pipeline failed open
+  - protection switched off
+  - the overlay window hidden
+  - the capture track ended
+  - no captured frame for 1 s (`FRAME_STALE_MS`)
+
+  On screen, the kill switch moved the status from Protected to "Protection off: Switched off with Ctrl+Alt+Shift+C" and back within one heartbeat.
+- **Frames keep flowing on a still screen.** Before choosing `FRAME_STALE_MS`, we checked whether Chromium stops sending frames when nothing changes. It doesn't: up to 19 of 45 frames a second were identical to the one before, and the longest gap was 49 ms. So 1 s without a frame means the capture has stalled, not that the screen is still.
+- **Thumbnails.** Both are the 96×54 grid, encoded to sRGB in the overlay (20 KB each, every third frame). They are sized in device pixels: 240×135 at 1080p, which is 160×90 CSS pixels at 150%. They are also capped at an eighth of the screen each way, which keeps them under the area limit on any screen, not only at 1080p (`src/core/thumbnail.test.ts`).
+  - **Raw input (unprotected)** is always live.
+  - **Protected preview** is the viewer check's grid, what the viewer sees. It shows a picture only while the overlay draws its smoothed copy, and a placeholder otherwise. So the two panes never show unsmoothed flashing at the same time: two 240×135 panes side by side would add up to 112% of the area limit at 1080p.
+- **Event log and counter.** One line per flash event, for example `0:42, 8 Hz, 2.1 s, smoothed`, timed from the app's start. An event merges hazards that are closer together than the hold plus the fade (2.25 s), which is exactly one stretch of the overlay being up. Without that, a clip whose hazard flag drops in and out would fill the log. The rate shown is the median of the per-frame estimates, because the estimate is inflated at the edges of a burst (Phase 3). The counter counts the events that were smoothed. Events while protection is off read "not smoothed (protection off)".
+- **Controls.**
+  - The sensitivity slider has the positions N = 2, 3 (default), 4, then strict. Each shows the Step 7 prediction of flashes seen at 10 Hz and 75 ms (1.3, 1.8, 2.3, 3.8). It has no pre-arm position: the user decided at the start of this phase that pre-arm stays off.
+  - "Ignore movement" is on by default. Unticked, it is the detector as first specified. The debug window's box drives the same setting.
+  - The on/off switch sits next to the status.
+  - The tray icon has a different shape per status (a filled disc, a disc with a wave, a slashed ring), so it reads without colour. Its menu has the status, "Protection on", "Show dashboard" and "Quit CalmFrame".
+  - Everything is a native control, so the page works from the keyboard: Tab, arrow keys, Space.
+- **Settings persist** in `settings.json` in the app's userData folder: sensitivity, Ignore movement, and where the dashboard was left. Each field is validated on load, so a damaged file falls back to the defaults. A position saved while the app ran (x 600, y 90) came back after a restart. Bounds are saved on every move and resize, because Windows sends `moved` only at the end of a mouse drag.
+- **Low capture rate.** The warning shows under 45 fps and stays up 5 s after the last low reading, so it doesn't come and go. During this session's testing capture ran at 39 to 50 fps, so the warning was often up. Check the demo-laptop setup before Phase 6.
+- **Cost.** Analysis per frame was 1.0 ms median and 1.7 ms p95 with the dashboard open, inside the 4 ms budget.
+
+Decisions and deviations:
+
+- **Protection starts on at every launch.** It is the one setting that does not persist. A switch left off by accident must not leave someone unprotected after a restart.
+- **Closing the dashboard hides it to the tray.** Quit is in the tray menu.
+- **One CalmFrame at a time.** At the start of this phase an earlier dev instance was still running, and capture fell to about 33 fps with two copies capturing. A second launch now shows the running copy's dashboard and exits.
+- **The debug window stays, behind a flag.** `CALMFRAME_DEBUG_WINDOW=1` opens it (the FPS sweep opens it too). It has the capture tools and the per-stage latency tables that Phase 6 uses.
+- **The dashboard is visible to no screen recorder,** as already noted under "One gotcha to plan around". Film it with the phone. No recording switch was built.
 
 ### Phase 6: measure and validate (D, Saturday 1:00 to 6:00 PM)
 

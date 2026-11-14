@@ -19,7 +19,18 @@ npm test           # unit tests
 npm run build:win  # packaged installer in dist/
 ```
 
-_TODO: tray, kill switch (Ctrl+Alt+Shift+C), dashboard walkthrough._
+### Using it
+
+CalmFrame runs in the tray and opens its dashboard at the top right of the screen. The dashboard stays above everything else, and screen recorders can't see it, so film it with a phone.
+
+- **Status.** "Protected" means frames are flowing and the detector is running. "Smoothing" means flashing was found and you are seeing a smoothed copy. "Protection off" says why it is off. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck on "Protected".
+- **Graph.** Flashes per second over the most affected part of the screen, against the WCAG limit of 3.
+- **Raw input (unprotected)** is a 240×135 view of what the detector sees, kept small enough that it can't become a hazardous flashing area itself. **Protected preview** shows what you see while CalmFrame is smoothing.
+- **Flash events.** One line per event, such as `0:42, 8 Hz, 2.1 s, smoothed`, and a count of the events smoothed since start.
+- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more than 3 flashes in a second). Each position shows how many flashes of a 10 Hz strobe the spec predicts get through first.
+- **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
+- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the dashboard's switch and the tray menu. Protection is always on when CalmFrame starts.
+- Settings are saved in `%APPDATA%\calmframe\settings.json`. Closing the dashboard keeps CalmFrame in the tray. Quit from the tray menu.
 
 ## How it works
 
@@ -40,7 +51,7 @@ _TODO. Known so far:_
 - The first one or two flashes pass before protection lands.
 - DRM-protected video captures as black.
 - Exclusive-fullscreen games may sit above the overlay.
-- Screen recorders can't see the overlay.
+- Screen recorders can't see the overlay or the dashboard. Both are excluded from capture on purpose, so the detector only ever sees the real screen.
 - Capture speed depends on screen resolution and CPU power mode. On our demo laptop, the native 2880×1800 screen captured at about 24 fps. We run it at 1920×1080 in Turbo mode with a 960×540 capture cap (about 54 fps). That makes the smoothed copy shown during a hazard softer.
 - Chromium ignores the request to leave the cursor out of the capture, so a smeared ghost cursor can appear in the smoothed copy.
 

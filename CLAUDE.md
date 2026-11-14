@@ -19,9 +19,11 @@ The spec's four roles (A to D) collapse to two laptops. Windows 11 is the only t
 
 ## Commands
 
-- `npm run dev`: run the app (Phase 4 state: the overlay runs live detection, stays invisible until a hazard and then shows the smoothed copy, and the debug window shows the graph, timings and hazard log; Ctrl+Alt+Shift+C toggles the overlay, and closing the debug window quits; the debug window's "Ignore movement" box switches the Step 5a concurrency rule off and on, and off is the fallback to the detector as first specified)
+- `npm run dev`: run the app (Phase 5 state: the overlay runs live detection, stays invisible until a hazard and then shows the smoothed copy. The dashboard sits above it with the status, graph, thumbnails, event log, sensitivity slider and "Ignore movement" switch (Step 5a; off is the fallback to the detector as first specified). The tray icon has the on/off switch and Quit. Ctrl+Alt+Shift+C toggles protection. Closing the dashboard hides it to the tray, so quit from the tray or stop the dev server. Only one copy runs at a time: a second launch shows the first one's dashboard and exits.)
+- `CALMFRAME_DEBUG_WINDOW=1 npm run dev`: also opens the Phase 0 to 4 debug window (capture stats, per-stage latency tables, capture-leak self-check, capture size cap, unprotected live preview)
 - `CALMFRAME_DEBUG_TINT=1 npm run dev`: also shows the Phase 0 red tint on the overlay and runs the automatic capture-leak check
-- `CALMFRAME_FPS_SWEEP=1 npm run dev`: measures the capture frame rate at each size cap with a moving test bar and logs a summary. Use it to check the demo-laptop setup.
+- `CALMFRAME_FPS_SWEEP=1 npm run dev`: opens the debug window, measures the capture frame rate at each size cap with its moving test bar, and logs a summary. Use it to check the demo-laptop setup.
+- Settings (slider, Ignore movement, dashboard position) live in `%APPDATA%\calmframe\settings.json`. Delete it to get the defaults back. Protection is not saved: it starts on at every launch.
 - `npm test`: Vitest, run once (`npm run test:watch` to watch)
 - `npm run typecheck`: three projects. core (src/core + src/shared, pure), node (main, preload, tests, tools), web (renderers)
 - `npm run lint`
@@ -50,7 +52,8 @@ Before every commit, `npm run typecheck && npm run lint && npm test` must pass.
 
 - **Constants.** `src/shared/config.ts` holds every value from the spec's "Defaults, in one place" table, plus the other fixed numbers the spec names. No other file may hard-code them. Import from config, and add new constants there.
 - **Pure core.** `tsconfig.core.json` typechecks src/core and src/shared with ES libraries only and no `types`. So `document`, `window`, `process`, `performance` and `console` don't exist there. ESLint blocks `electron`, `@electron-toolkit/*` and Node built-in imports in the same folders. Test files (`*.test.ts`) and `src/core/testing/` are exempt.
-- **Renderer pages.** The electron-vite renderer root is `src/`, with entries `src/overlay/index.html` and `src/dashboard/index.html`. The main process loads them with `loadPage(win, 'overlay' | 'dashboard')`.
+- **Renderer pages.** The electron-vite renderer root is `src/`, with entries `src/overlay/index.html`, `src/dashboard/index.html` and `src/debug/index.html`. The main process loads them with `loadPage(win, 'overlay' | 'dashboard' | 'debug')`.
+- **The status is never stored.** Protected, Smoothing and Protection off come from `deriveStatus` in `src/shared/status.ts`, re-derived from the latest heartbeat and its age. A new failure mode gets a rule there, with a test, that can only turn the status off.
 - **The one exception to the constants rule: `tools/strobe`.** The strobe page must stay one static page with no build step and no dependencies, so it cannot import config. It copies the five detection thresholds it displays, and `tools/strobe/strobe.test.ts` asserts the copies still equal `src/shared/config.ts`. Keep that test passing rather than editing the copies by hand. The page's own logic lives in `tools/strobe/strobe.js` as a classic script so the test can load it; ESLint's TypeScript return-type rule is switched off for `tools/strobe/**/*.js`.
 
 ## Entire (we're entering MLH "Best Use of Entire")
@@ -112,14 +115,14 @@ The challenge requires that we build, test and collaborate in Coder workspaces. 
 These were settled with the user on Sat Nov 14 after testing on the real screen. The spec has the reasoning and the numbers. If a later phase seems to need one changed, stop and ask.
 
 - **The concurrency rule (spec Step 5a) is on by default.** Without it, scrolling, dragging and opening windows switched the overlay on constantly. A reversal only counts when a quarter of an area window reverses the same way in the same captured frame. See "Movement false triggers" in the spec and `src/core/motion.test.ts`.
-  - **Keep the fallback reachable.** `concurrency: 'off'` is the detector as first specified, and the user asked for a switch back to it. Today it is the debug window's "Ignore movement" box. Phase 5 replaces the debug window, so it must carry the switch over.
+  - **Keep the fallback reachable.** `concurrency: 'off'` is the detector as first specified, and the user asked for a switch back to it. Since Phase 5 it is the dashboard's "Ignore movement" switch (saved in the settings). Later phases must keep it.
   - **Do not loosen `CONCURRENCY_MAX_OPPOSING` (0.25).** At 0.35 and above, 3,000 px/s scrolling triggers again.
 - **Some false triggers are accepted for now.** Very fast scrolling, fast camera turns in games, a tab switch that repaints three times, and lightning in video still trigger. The next lever is N = 4 on the Phase 5 sensitivity slider. A check for "the new frame is the old one shifted" was discussed and not built. Do not weaken the early trigger or the area rule to hide these.
 - **The smoothing target is 0.07** (`TARGET_RESIDUAL`). At 0.08 one live reading was over WCAG's 0.10. The user chose 0.07 over 0.06 to keep motion trails shorter.
 - **The dashboard sits above the overlay and is excluded from capture** (Phase 5 checklist).
-- **The pre-arm (spec Step 7a, a teammate's work) stays off** (`PREARM_ENABLED = false`) unless the user asks for it.
+- **The pre-arm (spec Step 7a, a teammate's work) stays off** (`PREARM_ENABLED = false`) unless the user asks for it. Asked again in Phase 5 (Sat Nov 14): the sensitivity slider has no pre-arm position, and the overlay still ignores pre-arm's outputs.
 - **Stretch ideas wait for the Saturday 6 PM gate, one at most:** smoothing only the flashing region (the spec's stretch), or a friend's proposal to correct brightness per region on the current frame without blending old frames. A native capture module is not planned for this weekend.
 
 ## Open questions
 
-- **Dashboard vs overlay stacking: decided (Sat Nov 14).** The dashboard sits above the overlay and is excluded from capture, as the debug window's stacking checkbox does. It is in the spec's Phase 5 checklist. One consequence is still open: a screen recorder can no longer see the dashboard or its protected-preview pane, so demo footage of them has to come from the phone unless Phase 5 adds a recording switch.
+- **Dashboard vs overlay stacking: decided (Sat Nov 14), built in Phase 5.** The dashboard sits above the overlay and is excluded from capture. One consequence is still open: a screen recorder can't see the dashboard or its protected-preview pane, so demo footage of them comes from the phone. Phase 5 built no recording switch.
