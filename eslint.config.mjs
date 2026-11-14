@@ -31,5 +31,15 @@ export default defineConfig(
         }
       ]
     }
+  },
+  {
+    // The strobe test page is plain browser JavaScript loaded as a classic script, because
+    // the spec requires one static page with no build step and no dependencies. TypeScript
+    // annotations cannot appear in it, so the rule that demands them does not apply.
+    // Its behaviour is covered by tools/strobe/strobe.test.ts instead.
+    files: ['tools/strobe/**/*.js'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
   }
 )

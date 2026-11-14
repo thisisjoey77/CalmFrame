@@ -433,6 +433,15 @@ Boxes 1 and 2 passed by 9:00 PM, so the design stands and no fallback is needed.
 - [ ] A frame counter and millisecond timestamp are drawn on screen for the slow-motion footage.
 - [ ] It starts paused behind a warning, Esc stops it, it auto-stops after 5 s, and it defaults to low contrast (a 0.2 swing between two greys).
 
+#### Phase 2 notes (Fri Nov 13, built on the Mac)
+
+Two decisions the spec did not fix, recorded because CLAUDE.md requires deviations to be written down:
+
+- **The page duplicates five thresholds instead of importing them.** "One static page with no build step and no dependencies" means it cannot import `src/shared/config.ts`, so `tools/strobe/strobe.js` copies `LUMINANCE_THRESHOLD`, `DARK_LIMIT`, `RED_THRESHOLD`, `RED_RATIO` and `RED_SCALE` to show whether the current settings would count as a flash. `tools/strobe/strobe.test.ts` imports the config module and asserts the copies still match, so config.ts stays the single source of truth without the page importing it.
+- **The cap on the swing while full contrast is off is 0.3.** The spec fixes the default swing (0.2) and says full contrast is a separate toggle, off by default, for the slow-motion measurement only, but it does not say what the range in between is. The page clamps the two greys to a 0.3 swing until the toggle is on, which keeps the default range low-contrast while still allowing either side of the 0.10 detection threshold to be explored.
+
+Everything else is as specified. Each half-cycle is a whole number of display frames, the frequency control offers only `refresh / 2n`, and the burst's achieved frequency is measured between its first and last transition so a part-finished half-cycle cannot bias it low.
+
 ### Phase 3: live detection (A and B, Friday 9:30 PM to Saturday 1:00 AM)
 
 - [ ] Capture, grid and detector run in the overlay renderer, and the checkerboard test reads 0.5.

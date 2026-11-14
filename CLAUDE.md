@@ -49,6 +49,7 @@ Before every commit, `npm run typecheck && npm run lint && npm test` must pass.
 - **Constants.** `src/shared/config.ts` holds every value from the spec's "Defaults, in one place" table, plus the other fixed numbers the spec names. No other file may hard-code them. Import from config, and add new constants there.
 - **Pure core.** `tsconfig.core.json` typechecks src/core and src/shared with ES libraries only and no `types`. So `document`, `window`, `process`, `performance` and `console` don't exist there. ESLint blocks `electron`, `@electron-toolkit/*` and Node built-in imports in the same folders. Test files (`*.test.ts`) and `src/core/testing/` are exempt.
 - **Renderer pages.** The electron-vite renderer root is `src/`, with entries `src/overlay/index.html` and `src/dashboard/index.html`. The main process loads them with `loadPage(win, 'overlay' | 'dashboard')`.
+- **The one exception to the constants rule: `tools/strobe`.** The strobe page must stay one static page with no build step and no dependencies, so it cannot import config. It copies the five detection thresholds it displays, and `tools/strobe/strobe.test.ts` asserts the copies still equal `src/shared/config.ts`. Keep that test passing rather than editing the copies by hand. The page's own logic lives in `tools/strobe/strobe.js` as a classic script so the test can load it; ESLint's TypeScript return-type rule is switched off for `tools/strobe/**/*.js`.
 
 ## Entire (we're entering MLH "Best Use of Entire")
 

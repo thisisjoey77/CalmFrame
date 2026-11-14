@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CalmFrame strobe test page</title>
+    <!--
+      One static page, no build step and no dependencies (docs/SPEC.md, prompt 4).
+      Open it straight from disk: tools/strobe/index.html.
+
+      Safety, from CLAUDE.md: it never auto-plays. It opens paused behind a warning,
+      every burst gets a 2-second steady lead-in, Esc or any click stops it, and it
+      stops itself after 5 seconds whatever the burst length says. Full contrast is a
+      separate toggle, off by default.
+    -->
+    <style>
+      :root {
+        /* The stage is a neutral grey page, as the spec describes. sRGB 128, Y = 0.216. */
+        --stage: rgb(128, 128, 128);
+        --chrome: #14161a;
+        --chrome-line: #2b2f37;
+        --text: #f2f4f8;
+        --text-dim: #9aa3b2;
+        --accent: #7fb2ff;
+        --warn: #ffb545;
+        --ok: #5bd98a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: var(--stage);
+        color: var(--text);
+        font:
+          14px/1.45 system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        overflow: hidden;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Warning gate                                                        */
+      /* ------------------------------------------------------------------ */
+
+      #gate {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: #0d0f12;
+        overflow: auto;
+      }
+
+      #gate .card {
+        max-width: 620px;
+        border: 1px solid var(--chrome-line);
+        border-radius: 10px;
+        padding: 28px 30px;
+        background: var(--chrome);
+      }
+
+      #gate h1 {
+        margin: 0 0 4px;
+        font-size: 22px;
+      }
+
+      #gate .flag {
+        display: inline-block;
+        margin-bottom: 18px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: #3a2a10;
+        color: var(--warn);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      #gate ul {
+        margin: 14px 0;
+        padding-left: 20px;
+      }
+
+      #gate li {
+        margin: 7px 0;
+      }
+
+      #gate .defaults {
+        margin: 18px 0 22px;
+        padding: 12px 14px;
+        border-left: 3px solid var(--accent);
+        background: #1a1d23;
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+
+      #gate button {
+        padding: 11px 18px;
+        border: 0;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #0d0f12;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Heads-up display: the numbers the slow-motion footage has to read    */
+      /* ------------------------------------------------------------------ */
+
+      #hud {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 20;
+        display: flex;
+        align-items: baseline;
+        gap: 28px;
+        padding: 10px 18px;
+        border-bottom: 1px solid #000;
+        background: #000;
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      #hud .big {
+        font-size: 7.5vh;
+        font-weight: 700;
+        line-height: 1;
+        color: #fff;
+      }
+
+      #hud .label {
+        margin-right: 6px;
+        font-size: 1.9vh;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--text-dim);
+      }
+
+      #hud .state {
+        margin-left: auto;
+        font-size: 3vh;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+
+      #hud .state[data-phase='idle'] {
+        color: var(--text-dim);
+      }
+
+      #hud .state[data-phase='leadIn'] {
+        color: var(--warn);
+      }
+
+      #hud .state[data-phase='burst'] {
+        color: #ff6b6b;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* The flashing patch, centred on the window                           */
+      /* ------------------------------------------------------------------ */
+
+      #patch {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        z-index: 10;
+        transform: translate(-50%, -50%);
+        background: var(--stage);
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Controls                                                            */
+      /* ------------------------------------------------------------------ */
+
+      #controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 20;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 14px 22px;
+        max-height: 46vh;
+        padding: 14px 18px;
+        border-top: 1px solid var(--chrome-line);
+        background: var(--chrome);
+        overflow: auto;
+      }
+
+      fieldset {
+        margin: 0;
+        padding: 10px 12px 12px;
+        border: 1px solid var(--chrome-line);
+        border-radius: 8px;
+      }
+
+      legend {
+        padding: 0 6px;
+        color: var(--text-dim);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      label {
+        display: block;
+        margin: 6px 0 2px;
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+
+      input[type='range'] {
+        width: 100%;
+        margin: 2px 0;
+        accent-color: var(--accent);
+      }
+
+      .readout {
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      .readout .dim {
+        color: var(--text-dim);
+      }
+
+      .verdict[data-flash='yes'] {
+        color: var(--warn);
+        font-weight: 600;
+      }
+
+      .verdict[data-flash='no'] {
+        color: var(--ok);
+        font-weight: 600;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .quick button {
+        padding: 4px 10px;
+        border: 1px solid var(--chrome-line);
+        border-radius: 6px;
+        background: #1f232a;
+        color: var(--text);
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .quick button[aria-pressed='true'] {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      #start {
+        width: 100%;
+        padding: 11px;
+        border: 0;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #0d0f12;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .hint {
+        margin-top: 8px;
+        color: var(--text-dim);
+        font-size: 11px;
+      }
+
+      .choice {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 5px 0;
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .danger {
+        color: var(--warn);
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- The page loads paused behind this. Nothing can flash until it is dismissed. -->
+    <div id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+      <div class="card">
+        <span class="flag">Flashing content</span>
+        <h1 id="gate-title">CalmFrame strobe test page</h1>
+        <p>
+          This page flashes a rectangle on purpose, to calibrate and demonstrate CalmFrame's
+          detector. Nothing flashes until you press Start, and every burst is limited.
+        </p>
+        <ul>
+          <li>
+            <strong>Do not run this if you have known or suspected photosensitivity</strong>, or if
+            anyone nearby does. Ask the room first.
+          </li>
+          <li>Each burst gets a 2-second steady lead-in, then stops by itself.</li>
+          <li><strong>Esc, or a click anywhere, stops a burst immediately.</strong></li>
+          <li>The page stops itself after 5 seconds no matter what the burst length says.</li>
+        </ul>
+        <div class="defaults">
+          Defaults: a 0.2 luminance swing between two greys (low contrast), 25% of the window,
+          10&nbsp;Hz, a 3-second burst. Full contrast is a separate toggle and is off.
+        </div>
+        <button id="gate-dismiss" type="button" autofocus>I understand — show the page</button>
+      </div>
+    </div>
+
+    <main id="app" hidden>
+      <div id="hud">
+        <div><span class="label">FRAME</span><span class="big" id="hud-frame">0</span></div>
+        <div><span class="label">MS</span><span class="big" id="hud-ms">0</span></div>
+        <div><span class="label">PHASE</span><span class="big" id="hud-phase">&mdash;</span></div>
+        <div class="state" id="hud-state" data-phase="idle">PAUSED</div>
+      </div>
+
+      <div id="patch"></div>
+
+      <section id="controls">
+        <fieldset>
+          <legend>Frequency</legend>
+          <label for="freq">Snapped to what this display can show</label>
+          <input id="freq" type="range" min="0" max="0" step="1" value="0" />
+          <div class="readout" id="freq-readout">&mdash;</div>
+          <div class="row quick" id="freq-quick"></div>
+          <div class="readout hint" id="refresh-readout">
+            Measuring display refresh rate&hellip;
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Levels</legend>
+          <label for="dark">Dark grey (sRGB)</label>
+          <input id="dark" type="range" min="0" max="255" step="1" value="89" />
+          <label for="light">Light grey (sRGB)</label>
+          <input id="light" type="range" min="0" max="255" step="1" value="149" />
+          <div class="readout" id="levels-readout">&mdash;</div>
+          <div class="readout" id="levels-verdict">&mdash;</div>
+          <label class="choice">
+            <input id="full-contrast" type="checkbox" />
+            <span class="danger">Full contrast (slow-motion measurement only)</span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Area and colour</legend>
+          <label for="area">Area, as a share of the window</label>
+          <input id="area" type="range" min="1" max="100" step="1" value="25" />
+          <div class="readout" id="area-readout">&mdash;</div>
+          <label class="choice">
+            <input type="radio" name="mode" value="grey" checked />
+            <span>Grey to grey</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="mode" value="red" />
+            <span>Red and black</span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Burst</legend>
+          <label for="burst">Length</label>
+          <input id="burst" type="range" min="500" max="5000" step="100" value="3000" />
+          <div class="readout" id="burst-readout">&mdash;</div>
+          <button id="start" type="button">Start burst</button>
+          <div class="hint">
+            2-second steady lead-in first. Esc or any click stops it. Hard stop at 5 s.
+          </div>
+        </fieldset>
+      </section>
+    </main>
+
+    <script src="strobe.js"></script>
+    <script>
+      ;(function () {
+        'use strict'
+
+        const S = globalThis.CalmFrameStrobe
+
+        const el = (id) => document.getElementById(id)
+        const gate = el('gate')
+        const app = el('app')
+        const patch = el('patch')
+        const hud = {
+          frame: el('hud-frame'),
+          ms: el('hud-ms'),
+          phase: el('hud-phase'),
+          state: el('hud-state')
+        }
+        const freqInput = el('freq')
+        const darkInput = el('dark')
+        const lightInput = el('light')
+        const areaInput = el('area')
+        const burstInput = el('burst')
+        const fullContrastInput = el('full-contrast')
+
+        /** Neutral grey shown while idle: the stage colour, so the patch outline is visible. */
+        const IDLE_GREY = 128
+        const RED = [255, 0, 0]
+        const BLACK = [0, 0, 0]
+
+        const state = {
+          refreshHz: S.FALLBACK_REFRESH_HZ,
+          refreshMeasured: false,
+          refreshSamples: [],
+          options: [],
+          optionIndex: 0,
+          targetHz: S.DEFAULT_FREQ_HZ,
+          framesPerHalfCycle: 3,
+          mode: 'grey',
+          /** The burst runner while a burst is armed or flashing, null while idle. */
+          runner: null,
+          /** The two colours the running burst alternates between, dark state first. */
+          states: null,
+          achieved: null,
+          hardStopTimer: 0
+        }
+
+        const defaults = S.defaultGreyBytes()
+        darkInput.value = String(defaults.dark)
+        lightInput.value = String(defaults.light)
+        areaInput.value = String(Math.round(S.DEFAULT_AREA_SHARE * 100))
+        burstInput.value = String(S.DEFAULT_BURST_MS)
+
+        const fmt = (value, digits) => value.toFixed(digits)
+
+        // ----------------------------------------------------------------
+        // Colours
+        // ----------------------------------------------------------------
+
+        const greys = () => {
+          const dark = Number(darkInput.value)
+          const light = Number(lightInput.value)
+          return { dark: Math.min(dark, light), light: Math.max(dark, light) }
+        }
+
+        const rgb = (c) => 'rgb(' + c[0] + ', ' + c[1] + ', ' + c[2] + ')'
+        const grey = (byte) => rgb([byte, byte, byte])
+
+        /** The two states a burst alternates between, dark state first. */
+        function burstStates() {
+          if (state.mode === 'red') return [BLACK, RED]
+          const g = greys()
+          return [
+            [g.dark, g.dark, g.dark],
+            [g.light, g.light, g.light]
+          ]
+        }
+
+        // ----------------------------------------------------------------
+        // Frequency options, snapped to the measured refresh rate
+        // ----------------------------------------------------------------
+
+        function rebuildFrequencyOptions() {
+          const options = S.achievableFrequencies(state.refreshHz, S.FREQ_MIN_HZ, S.FREQ_MAX_HZ)
+          // achievableFrequencies returns coarse to fine; the slider reads low to high.
+          options.sort((a, b) => a.hz - b.hz)
+          state.options = options
+          freqInput.max = String(Math.max(0, options.length - 1))
+          selectNearestFrequency(state.targetHz)
+        }
+
+        function selectNearestFrequency(hz) {
+          if (state.options.length === 0) return
+          let bestIndex = 0
+          for (let i = 1; i < state.options.length; i++) {
+            if (Math.abs(state.options[i].hz - hz) < Math.abs(state.options[bestIndex].hz - hz)) {
+              bestIndex = i
+            }
+          }
+          applyFrequencyIndex(bestIndex)
+        }
+
+        function applyFrequencyIndex(index) {
+          const option = state.options[index]
+          if (!option) return
+          state.optionIndex = index
+          state.targetHz = option.hz
+          state.framesPerHalfCycle = option.framesPerHalfCycle
+          freqInput.value = String(index)
+          renderFrequency()
+        }
+
+        function renderQuickButtons() {
+          const host = el('freq-quick')
+          host.textContent = ''
+          S.STANDARD_FREQS_HZ.forEach((hz) => {
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.textContent = hz + ' Hz'
+            button.addEventListener('click', () => selectNearestFrequency(hz))
+            host.appendChild(button)
+          })
+        }
+
+        // ----------------------------------------------------------------
+        // Readouts
+        // ----------------------------------------------------------------
+
+        function renderFrequency() {
+          const achieved =
+            state.achieved === null
+              ? '<span class="dim">achieved &mdash;</span>'
+              : 'achieved <strong>' + fmt(state.achieved, 2) + ' Hz</strong>'
+          el('freq-readout').innerHTML =
+            'target <strong>' +
+            fmt(state.targetHz, 2) +
+            ' Hz</strong> &middot; ' +
+            state.framesPerHalfCycle +
+            ' frame' +
+            (state.framesPerHalfCycle === 1 ? '' : 's') +
+            ' per half-cycle &middot; ' +
+            achieved
+          Array.prototype.forEach.call(el('freq-quick').children, (button, i) => {
+            const hz = S.STANDARD_FREQS_HZ[i]
+            const snapped = S.snapFrequency(hz, state.refreshHz, S.FREQ_MIN_HZ, S.FREQ_MAX_HZ)
+            button.setAttribute(
+              'aria-pressed',
+              snapped && Math.abs(snapped.hz - state.targetHz) < 1e-9 ? 'true' : 'false'
+            )
+          })
+        }
+
+        function renderRefresh() {
+          el('refresh-readout').innerHTML = state.refreshMeasured
+            ? 'Display refresh: <strong>' +
+              fmt(state.refreshHz, 1) +
+              ' Hz</strong> (measured over ' +
+              S.REFRESH_SAMPLE_FRAMES +
+              ' frames). A square wave needs a whole number of frames per half-cycle, so this display can show ' +
+              state.options.length +
+              ' frequencies between ' +
+              S.FREQ_MIN_HZ +
+              ' and ' +
+              S.FREQ_MAX_HZ +
+              ' Hz.'
+            : 'Measuring display refresh rate&hellip; (assuming ' +
+              fmt(state.refreshHz, 0) +
+              ' Hz until then)'
+        }
+
+        function renderLevels() {
+          if (state.mode === 'red') {
+            const red = S.classifyRedFlash(RED, BLACK)
+            const lum = S.classifyGreyFlash(0, 0)
+            const redLuminance = S.relativeLuminance(255, 0, 0)
+            el('levels-readout').innerHTML =
+              'red &rho; = <strong>' +
+              fmt(red.ratioA, 2) +
+              '</strong>, v = <strong>' +
+              fmt(red.vA, 0) +
+              '</strong> &middot; black &rho; = ' +
+              fmt(red.ratioB, 2) +
+              ', v = ' +
+              fmt(red.vB, 0) +
+              ' &middot; &Delta;v = <strong>' +
+              fmt(red.deltaV, 0) +
+              '</strong> &middot; Y ' +
+              fmt(redLuminance, 3) +
+              ' to ' +
+              fmt(lum.yLow, 3)
+            const verdict = el('levels-verdict')
+            verdict.dataset.flash = red.countsAsRedFlash ? 'yes' : 'no'
+            verdict.innerHTML =
+              (red.countsAsRedFlash
+                ? 'Counts as a red flash (&rho; &ge; ' +
+                  S.RED_RATIO +
+                  ' and &Delta;v &gt; ' +
+                  S.RED_THRESHOLD +
+                  ')'
+                : 'Not a red flash by the threshold') +
+              ', and as a luminance flash (&Delta;Y ' +
+              fmt(redLuminance, 3) +
+              ' &ge; ' +
+              S.LUMINANCE_THRESHOLD +
+              ')'
+            return
+          }
+
+          const g = greys()
+          const flash = S.classifyGreyFlash(g.dark, g.light)
+          el('levels-readout').innerHTML =
+            'sRGB <strong>' +
+            g.dark +
+            '</strong> &rarr; Y = <strong>' +
+            fmt(flash.yLow, 4) +
+            '</strong> &middot; sRGB <strong>' +
+            g.light +
+            '</strong> &rarr; Y = <strong>' +
+            fmt(flash.yHigh, 4) +
+            '</strong> &middot; swing &Delta;Y = <strong>' +
+            fmt(flash.swing, 4) +
+            '</strong>'
+          const verdict = el('levels-verdict')
+          verdict.dataset.flash = flash.countsAsFlash ? 'yes' : 'no'
+          verdict.innerHTML = flash.countsAsFlash
+            ? 'Counts as a flash: &Delta;Y &ge; ' +
+              S.LUMINANCE_THRESHOLD +
+              ' and the darker state is under ' +
+              S.DARK_LIMIT
+            : 'Below the flash threshold: ' +
+              (flash.meetsThreshold
+                ? 'the darker state is not under ' + S.DARK_LIMIT
+                : '&Delta;Y &lt; ' + S.LUMINANCE_THRESHOLD)
+        }
+
+        function renderArea() {
+          const share = Number(areaInput.value) / 100
+          const rect = S.rectForShare(share, window.innerWidth, window.innerHeight)
+          patch.style.width = rect.width + 'px'
+          patch.style.height = rect.height + 'px'
+          el('area-readout').innerHTML =
+            '<strong>' +
+            rect.width +
+            ' &times; ' +
+            rect.height +
+            ' px</strong> = ' +
+            fmt(share * 100, 1) +
+            '% of the ' +
+            window.innerWidth +
+            ' &times; ' +
+            window.innerHeight +
+            ' window'
+        }
+
+        function renderBurst() {
+          const ms = Number(burstInput.value)
+          el('burst-readout').innerHTML =
+            '<strong>' +
+            fmt(ms / 1000, 1) +
+            ' s</strong> &middot; hard stop at ' +
+            fmt(S.HARD_STOP_MS / 1000, 0) +
+            ' s &middot; lead-in ' +
+            fmt(S.LEAD_IN_MS / 1000, 0) +
+            ' s'
+        }
+
+        function renderHud(frame, ms, phaseLabel, stateLabel, phaseKey) {
+          hud.frame.textContent = String(frame)
+          hud.ms.textContent = String(Math.round(ms))
+          hud.phase.textContent = phaseLabel
+          hud.state.textContent = stateLabel
+          hud.state.dataset.phase = phaseKey
+        }
+
+        function renderAll() {
+          renderFrequency()
+          renderRefresh()
+          renderLevels()
+          renderArea()
+          renderBurst()
+        }
+
+        // ----------------------------------------------------------------
+        // The burst
+        // ----------------------------------------------------------------
+
+        function start() {
+          if (state.runner) return
+          state.runner = S.createBurstRunner({
+            leadInMs: S.LEAD_IN_MS,
+            burstMs: Number(burstInput.value),
+            framesPerHalfCycle: state.framesPerHalfCycle
+          })
+          state.states = burstStates()
+          state.achieved = null
+          state.runner.start(performance.now())
+          // Hold the burst's dark state through the lead-in, so the burst's first change is
+          // the first real flash and the measured flash count is not off by one.
+          patch.style.background = rgb(state.states[0])
+          renderHud(0, 0, '—', 'LEAD-IN', 'leadIn')
+          // A click anywhere stops the burst. Armed on the next tick so the click that
+          // started it does not stop it again.
+          setTimeout(() => document.addEventListener('click', onClickStop), 0)
+          // Backstop in case requestAnimationFrame stalls: the hard stop must still land.
+          state.hardStopTimer = setTimeout(stop, S.LEAD_IN_MS + S.HARD_STOP_MS + 250)
+        }
+
+        function stop() {
+          if (!state.runner) return
+          const status = state.runner.stop()
+          state.runner = null
+          clearTimeout(state.hardStopTimer)
+          document.removeEventListener('click', onClickStop)
+          patch.style.background = grey(IDLE_GREY)
+          renderHud(status.burstFrame, 0, '—', 'PAUSED', 'idle')
+          renderFrequency()
+        }
+
+        function onClickStop() {
+          stop()
+        }
+
+        function frame(now) {
+          requestAnimationFrame(frame)
+
+          if (!state.runner) {
+            measureRefresh(now)
+            return
+          }
+
+          const status = state.runner.tick(now)
+
+          if (status.phase === 'idle') {
+            stop()
+            return
+          }
+
+          if (status.phase === 'leadIn') {
+            renderHud(
+              0,
+              0,
+              'LEAD',
+              'LEAD-IN ' + fmt(status.leadInRemainingMs / 1000, 1) + 's',
+              'leadIn'
+            )
+            return
+          }
+
+          if (status.changed) patch.style.background = rgb(state.states[status.half])
+          state.achieved = S.achievedHz(status.halfCycles, status.measuredMs)
+          renderHud(
+            status.burstFrame,
+            status.elapsedMs,
+            status.half === 1 ? 'HI' : 'LO',
+            'FLASHING',
+            'burst'
+          )
+          renderFrequency()
+        }
+
+        /** Rolling estimate of the display refresh rate, taken only while idle. */
+        function measureRefresh(now) {
+          state.refreshSamples.push(now)
+          if (state.refreshSamples.length < S.REFRESH_SAMPLE_FRAMES) return
+          const estimate = S.estimateRefreshHz(state.refreshSamples)
+          state.refreshSamples = []
+          if (estimate === null) return
+          const changed = !state.refreshMeasured || Math.abs(estimate - state.refreshHz) > 1
+          state.refreshHz = estimate
+          state.refreshMeasured = true
+          if (changed) {
+            rebuildFrequencyOptions()
+            renderRefresh()
+          }
+        }
+
+        // ----------------------------------------------------------------
+        // Wiring
+        // ----------------------------------------------------------------
+
+        function applyContrastLimit() {
+          if (fullContrastInput.checked) return
+          const g = greys()
+          const limited = S.clampGreysToSwing(g.dark, g.light, S.MAX_SWING_WITHOUT_FULL_CONTRAST)
+          darkInput.value = String(limited.dark)
+          lightInput.value = String(limited.light)
+        }
+
+        freqInput.addEventListener('input', () => applyFrequencyIndex(Number(freqInput.value)))
+        darkInput.addEventListener('input', () => {
+          applyContrastLimit()
+          renderLevels()
+        })
+        lightInput.addEventListener('input', () => {
+          applyContrastLimit()
+          renderLevels()
+        })
+        fullContrastInput.addEventListener('change', () => {
+          applyContrastLimit()
+          renderLevels()
+        })
+        areaInput.addEventListener('input', renderArea)
+        burstInput.addEventListener('input', renderBurst)
+        Array.prototype.forEach.call(document.querySelectorAll('input[name="mode"]'), (radio) => {
+          radio.addEventListener('change', () => {
+            state.mode = radio.value
+            renderLevels()
+          })
+        })
+        el('start').addEventListener('click', start)
+
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') stop()
+        })
+        // Anything that takes the page out of view stops the burst too.
+        window.addEventListener('blur', stop)
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) stop()
+        })
+        window.addEventListener('resize', renderArea)
+
+        el('gate-dismiss').addEventListener('click', () => {
+          gate.hidden = true
+          app.hidden = false
+          renderArea()
+          el('start').focus()
+        })
+
+        renderQuickButtons()
+        rebuildFrequencyOptions()
+        patch.style.background = grey(IDLE_GREY)
+        renderAll()
+        requestAnimationFrame(frame)
+      })()
+    </script>
+  </body>
+</html>
