@@ -537,10 +537,36 @@ Findings:
 
 ### Phase 4: smoothing overlay (A, Saturday 9:00 AM to 1:00 PM)
 
-- [ ] A hazard makes the overlay opaque within one frame, showing the smoothed copy. It releases after the hold and fade.
-- [ ] On the 10 Hz test strobe the screen looks like steady grey, while the detector still reports the hazard underneath.
-- [ ] The overlay never toggles during a continuous strobe.
-- [ ] The watchdog hides a deliberately frozen overlay.
+- [x] A hazard makes the overlay opaque within one frame, showing the smoothed copy. It releases after the hold and fade.
+- [ ] On the 10 Hz test strobe the screen looks like steady grey, while the detector still reports the hazard underneath. *Open: measured at the old 0.08 target only. One strobe run at 0.07 is left.*
+- [x] The overlay never toggles during a continuous strobe.
+- [x] The watchdog hides a deliberately frozen overlay.
+
+#### Phase 4 results (Fri Nov 13 to Sat Nov 14, Windows demo laptop, 1920×1080 at 60 Hz)
+
+Three boxes pass and one waits for a re-run. The strobe checks used the test page at its default low contrast (a 0.2 swing, 10 Hz). The numbers come from the app's own log.
+
+- **On within one frame, off slowly.** Every hazard moved the state machine from Safe to Active on the hazard's own frame, at opacity 1.00. Release began 1.48 to 1.52 s after the last hazard frame and the fade took 0.72 to 0.77 s.
+- **No toggling.** Three bursts of the test strobe (4.96 s, 4.99 s and 2.96 s) each produced one hazard and one Active episode. On a real clip with red flashing at about 11 to 20 Hz that kept stopping and starting, the overlay stayed on for 11.7 s without a break and applied the red desaturation.
+- **Watchdog.** The debug freeze blocked the overlay renderer for 5 s. Main hid the overlay after 751 ms without a heartbeat. When the renderer resumed it went to Disabled and stayed hidden until the kill switch switched protection back on 3 s later.
+- **Steady grey: not yet.** With the 0.08 target, the viewer check measured a leftover swing of 0.083 to 0.105 on the test strobe (α 0.22 to 0.23), and its detector never raised a hazard on what the viewer saw. One reading, 0.105, was over WCAG's 0.10. By eye it was "still flickering, just smoother": at this contrast a swing near 0.09 is under the threshold but visible. The detector underneath kept reporting the hazard for the whole burst (graph 10 to 10.5). The residual formula assumes even sampling and capture ran unevenly at 39 to 50 fps. **Decision: target 0.07**, which scales the worst reading to about 0.092. 0.06 would give more room, at the cost of longer trails. The box stays open until one strobe run confirms the new figure.
+- **Drawing does not slow detection.** The grid wait was 7 to 9 ms at the median whether or not the overlay was drawn, with no busy skips in 740 drawn frames. The GPU contention that Phase 3 worried about did not appear, because Pass C draws only while the overlay is visible.
+
+  | Stage, while the overlay is drawn | Median | p95 |
+  | --- | --- | --- |
+  | Captured → decision | 15 to 17 ms | 25 to 27 ms |
+  | Decision → overlay drawn on the GPU | 5.4 to 5.8 ms | 7 to 9 ms |
+  | Captured → overlay drawn | 21 to 23 ms | 31 to 33 ms |
+
+  As in Phase 3, these are understated and leave out the compositor and the display. The slow-motion footage stays the end-to-end number.
+- **Startup self-tests pass.** Passes B and C match the CPU twin to 0.58 of an 8-bit code, and the half-float state round-trips exactly.
+
+Findings:
+
+- **Movement triggered the overlay constantly.** See the next section and Step 5a.
+- **Fast camera turns in games still trigger.** After Step 5a, flicking the view left, right and back in Minecraft, and the same in Valorant footage, still switches the overlay on. A fast turn moves the picture several times further per frame than Step 5a's limit, and bright and dark halves of a scene swapping places is a large-area brightness reversal. Options, none built: N = 4 on the sensitivity slider, or a check for whether the new frame is the old one shifted.
+- **The debug window's preview is unprotected.** It sits above the overlay and is big enough to count as a hazardous area. Use it only with the low-contrast test strobe. Phase 5's raw thumbnail is capped at 240×135 for this reason.
+- **Capture ran at 39 to 50 fps**, mostly 45 to 48, below Phase 0's 54. Check the demo-laptop setup before Phase 6.
 
 #### Movement false triggers (Sat Nov 14, Windows demo laptop)
 
@@ -560,7 +586,7 @@ Found while testing Phase 4 on real content: scrolling YouTube, scrolling VS Cod
   The two movement cases left at 40 fps are 5,000 and 6,000 px/s scrolls. The strobe not caught is the inverting checkerboard. Allowing more opposing reversals than a quarter (0.35, 0.5, 0.75) let 3,000 px/s scrolling trigger again, so 0.25 stays.
 - **The simulated pages are stand-ins** (a grid of video thumbnails, a chat page with code blocks, a dragged window), not recordings of this screen. The detector with the rule on matched the prototype on every frame of every case.
 - **Cost.** A detector step took 0.5 to 0.85 ms in Vitest on the demo laptop with the rule on or off, on a still screen, a scrolling page and a 10 Hz strobe. The rule adds nothing measurable against the 4 ms budget.
-- **Not yet confirmed on the live screen.** To check: with the debug window's "Ignore movement" box ticked, scroll YouTube and VS Code, drag a window and switch tabs, then run the 10 Hz test strobe. Untick the box to compare with the old behaviour. The terminal's `[detect]` line shows how many reversals the rule set aside.
+- **On the live screen (Sat Nov 14, by eye).** Scrolling no longer triggers unless it is very fast, and most of the real flashing clip is handled as before, with a trigger on its lightning scene. Fast camera turns in games still trigger (see "Phase 4 results"). The debug window's "Ignore movement" box switches the rule off to compare, and the terminal's `[detect]` line shows how many reversals the rule set aside.
 - **Tab switches remain.** If they still trigger too often on the live screen, the next step is N = 4, which costs about half a flash more at the start of a real strobe.
 
 ### Phase 5: dashboard and controls (C, Saturday 9:00 AM to 3:00 PM)
