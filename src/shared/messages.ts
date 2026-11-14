@@ -59,7 +59,12 @@ export const IPC = {
   /** overlay -> main -> dashboard: the thumbnails, every STATS_EVERY_N_FRAMES frames. */
   thumbnails: 'thumbnails',
   /** overlay -> main -> dashboard: a flash event started or ended. */
-  flashEvent: 'flash-event'
+  flashEvent: 'flash-event',
+  /** overlay -> main, invoke: start the native capture module (trail #9) and send its
+   *  frames to the overlay as shared textures. Resolves a NativeCaptureStart. */
+  startNativeCapture: 'start-native-capture',
+  /** main -> overlay: the native capture module reported an error. */
+  nativeCaptureError: 'native-capture-error'
 } as const
 
 /** What a renderer asks main for when it loads. */
@@ -67,7 +72,38 @@ export interface InitInfo {
   settings: Settings
   /** When the app started, wall-clock ms since the epoch. The event log counts from it. */
   startedAtWallMs: number
+  /** Capture with the native module instead of Chromium (CALMFRAME_NATIVE_CAPTURE=1). */
+  nativeCapture: boolean
 }
+
+/** Sent with each native frame's shared texture, main -> overlay. Only this and a texture
+ *  handle cross the process boundary, never pixels. Times are Unix epoch ms from the
+ *  high-resolution system clock, so the overlay can put them on its own clock. */
+export interface NativeFrameMeta {
+  /** When the frame reached the screen (for a repeat: when it was sent again). */
+  presentEpochMs: number
+  /** The screen had not changed, so this is the latest frame sent again. */
+  repeat: boolean
+  /** Screen updates Desktop Duplication merged into this frame, so missed. */
+  missed: number
+}
+
+/** What the native capture module reports when it starts. */
+export interface NativeCaptureInfo {
+  width: number
+  height: number
+  adapter: string
+  adapterLuid: string
+  /** The duplicated output's Windows device name. */
+  output: string
+  /** DuplicateOutput1 or DuplicateOutput. */
+  method: string
+  /** Shared textures in the ring. */
+  slots: number
+}
+
+export type NativeCaptureStart =
+  { ok: true; info: NativeCaptureInfo } | { ok: false; error: string }
 
 /** The dashboard's two thumbnails (Phase 5), each the 96x54 grid as sRGB RGBA8, row 0 at
  *  the top. 20 KB each: the only picture data that crosses IPC, never a frame. */
@@ -90,8 +126,12 @@ export interface CaptureSize {
 }
 
 export interface CaptureStats {
+  /** Chromium's screen capture, or the native module (trail #9). */
+  source: 'chromium' | 'native'
   /** Frame callbacks in the last rolling second. */
   fps: number
+  /** Of those, frames the native module sent again because the screen had not changed. */
+  repeats: number
   /** Capture-to-callback delay over recent frames, or null if captureTime is not provided. */
   delayMedianMs: number | null
   delayP95Ms: number | null
@@ -321,6 +361,8 @@ export interface CalmFrameApi {
   sendFlashEvent(event: FlashEventMessage): void
   onProtection(callback: (enabled: boolean, reason: string) => void): void
   onDebugFreeze(callback: (ms: number) => void): void
+  startNativeCapture(): Promise<NativeCaptureStart>
+  onNativeCaptureError(callback: (message: string) => void): void
   // every renderer
   getInit(): Promise<InitInfo>
   onSettings(callback: (settings: Settings) => void): void

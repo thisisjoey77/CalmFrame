@@ -17,6 +17,14 @@ import { GRID_CELLS, GRID_COLS, GRID_READBACK_SLOTS, GRID_ROWS } from '../shared
 import { checkError, linkProgram, setNearestClamp } from './glUtil'
 import { FULLSCREEN_VS, GRID_FS } from './shaders'
 
+/** One captured frame to upload: the <video> element (Chromium's capture) or a VideoFrame
+ *  (the native module, trail #9), with the size read from the frame itself. */
+export interface FrameImage {
+  source: TexImageSource
+  width: number
+  height: number
+}
+
 /** Timing of one finished read-back, handed over with its grid. Reused between calls.
  *  Times are on the performance clock, the same clock as capture timestamps. */
 export interface GridReadback {
@@ -128,15 +136,15 @@ export class GridPass {
   }
 
   /**
-   * Upload the video's current frame. The size is read from the frame every time and
-   * texImage2D reallocates the texture, so a capture-size change is picked up at once.
+   * Upload a captured frame. The size is read from the frame every time and texImage2D
+   * reallocates the texture, so a capture-size change is picked up at once.
    */
-  uploadVideo(video: HTMLVideoElement): void {
+  upload(image: FrameImage): void {
     const gl = this.gl
-    this.width = video.videoWidth
-    this.height = video.videoHeight
+    this.width = image.width
+    this.height = image.height
     gl.bindTexture(gl.TEXTURE_2D, this.source)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image.source)
   }
 
   /** Upload generated sRGB RGBA8 pixels, row 0 at the top (startup self-test). */
@@ -156,11 +164,11 @@ export class GridPass {
    * @returns false if every read-back slot is still busy, so the frame was skipped
    *          rather than waiting for the GPU
    */
-  analyse(video: HTMLVideoElement, tMs: number, tag = 0): boolean {
+  analyse(image: FrameImage, tMs: number, tag = 0): boolean {
     if (this.free.length === 0) return false
     const gl = this.gl
     const t0 = performance.now()
-    this.uploadVideo(video)
+    this.upload(image)
     this.draw()
     const slot = this.free.pop() as Slot
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.buffer)

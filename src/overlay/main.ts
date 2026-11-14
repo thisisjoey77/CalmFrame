@@ -1,7 +1,9 @@
 // Overlay renderer. Opens the screen capture and runs the per-frame loop: live detection
 // (Phase 3) and, during a hazard, the smoothed copy drawn over the screen (Phase 4). The
-// Phase 0 red tint is a debug flag: the main process loads this page with #tint when
-// CALMFRAME_DEBUG_TINT=1.
+// capture is Chromium's (getDisplayMedia into a <video>) or, with CALMFRAME_NATIVE_CAPTURE=1,
+// the native module's shared textures at full size (trail #9); both feed the same frame
+// handler. The Phase 0 red tint is a debug flag: the main process loads this page with
+// #tint when CALMFRAME_DEBUG_TINT=1.
 import {
   CAPTURE_FPS,
   CAPTURE_MAX_HEIGHT,
@@ -12,11 +14,11 @@ import {
   HEARTBEAT_MS,
   STATS_EVERY_N_FRAMES
 } from '../shared/config'
-import type { CaptureSize } from '../shared/messages'
+import type { CaptureSize, InitInfo, NativeFrameMeta } from '../shared/messages'
 import { DEFAULT_SETTINGS, detectorOptionsFor, type Settings } from '../shared/settings'
 import { LiveAnalysis } from './analysis'
 import { openScreenStream } from './capture'
-import { GridPass } from './gridPass'
+import { GridPass, type FrameImage } from './gridPass'
 import { runGridSelfTest } from './gridSelfTest'
 import { runSelfCheck } from './selfCheck'
 import { SmoothPass } from './smoothPass'
@@ -38,7 +40,19 @@ function setTint(on: boolean): void {
 }
 
 let track: MediaStreamTrack | null = null
+/** Which capture feeds the frame handler. */
+let source: 'chromium' | 'native' = 'chromium'
+/** Native capture started and has not been stopped. */
+let nativeLive = false
+/** Native only: the latest frame, kept while the capture-leak self-check samples it. */
+let checkFrame: VideoFrame | null = null
 const callbackTimes: number[] = []
+/** Native only: frames in the last rolling second that were the screen sent again. */
+const repeatTimes: number[] = []
+/** The latest frame's size and capture timestamp. */
+let frameWidth = 0
+let frameHeight = 0
+let lastCaptureT = -Infinity
 const delays: number[] = []
 let framesTotal = 0
 let skippedFrames = 0
@@ -65,15 +79,25 @@ function pipelineFailed(error: unknown): void {
   api.sendPipelineError(String(error))
 }
 
+function captureLive(): boolean {
+  return source === 'native' ? nativeLive : track !== null && track.readyState === 'live'
+}
+
 function sendStats(): void {
-  const s = track?.getSettings() as MediaTrackSettings & { cursor?: string }
+  // Desktop Duplication leaves the cursor out of the image.
+  const s =
+    source === 'native'
+      ? { frameRate: undefined, width: frameWidth, height: frameHeight, cursor: 'never' }
+      : (track?.getSettings() as MediaTrackSettings & { cursor?: string })
   api.sendCaptureStats({
+    source,
     fps: callbackTimes.length,
+    repeats: repeatTimes.length,
     delayMedianMs: percentile(delays, 0.5),
     delayP95Ms: percentile(delays, 0.95),
     hasCaptureTime,
-    width: video.videoWidth,
-    height: video.videoHeight,
+    width: frameWidth,
+    height: frameHeight,
     skippedFrames,
     framesTotal,
     settings: { frameRate: s?.frameRate, width: s?.width, height: s?.height, cursor: s?.cursor },
@@ -88,50 +112,144 @@ function sendStats(): void {
 // Each (re)started capture gets a new generation so a stale frame-callback chain stops.
 let generation = 0
 
-function onFrame(gen: number, now: number, meta: VideoFrameCallbackMetadata): void {
-  if (gen !== generation) return
+/**
+ * One captured frame, from either capture.
+ * @param captureT when the frame was captured, on the performance clock, if known
+ * @param fallbackT the time to use when it is not (the frame callback's time)
+ */
+function processFrame(image: FrameImage, captureT: number | undefined, fallbackT: number): void {
   const t = performance.now()
   lastFrameAt = t
   framesTotal++
-  if (lastPresented >= 0 && meta.presentedFrames > lastPresented + 1) {
-    skippedFrames += meta.presentedFrames - lastPresented - 1
-  }
-  lastPresented = meta.presentedFrames
+  frameWidth = image.width
+  frameHeight = image.height
 
   callbackTimes.push(t)
   while (callbackTimes.length > 0 && t - callbackTimes[0] > FPS_WINDOW_MS) callbackTimes.shift()
+  while (repeatTimes.length > 0 && t - repeatTimes[0] > FPS_WINDOW_MS) repeatTimes.shift()
 
-  if (meta.captureTime !== undefined) {
+  if (captureT !== undefined) {
     hasCaptureTime = true
-    delays.push(t - meta.captureTime)
+    delays.push(t - captureT)
     if (delays.length > DELAY_STATS_WINDOW) delays.shift()
   }
 
-  // Timing logic runs on capture timestamps. Chromium supplies captureTime for screen
-  // capture (Phase 0); the callback time is the fallback, on the same clock.
+  // Timing logic runs on capture timestamps, which must keep increasing. A native frame
+  // presented just as the module re-sent the previous one can be stamped a fraction of a
+  // millisecond before it.
+  let tMs = captureT ?? fallbackT
+  if (tMs <= lastCaptureT) tMs = lastCaptureT + 0.001
+  lastCaptureT = tMs
   if (analysis) {
     try {
-      analysis.frame(video, meta.captureTime ?? now, callbackTimes.length)
+      analysis.frame(image, tMs, callbackTimes.length)
     } catch (error) {
       pipelineFailed(error)
     }
   }
 
   if (framesTotal % STATS_EVERY_N_FRAMES === 0) sendStats()
+}
+
+/** Chromium's capture: one call per frame the <video> presents. */
+function onFrame(gen: number, now: number, meta: VideoFrameCallbackMetadata): void {
+  if (gen !== generation) return
+  if (lastPresented >= 0 && meta.presentedFrames > lastPresented + 1) {
+    skippedFrames += meta.presentedFrames - lastPresented - 1
+  }
+  lastPresented = meta.presentedFrames
+  // Chromium supplies captureTime for screen capture (Phase 0), on the performance clock.
+  processFrame(
+    { source: video, width: video.videoWidth, height: video.videoHeight },
+    meta.captureTime,
+    now
+  )
   video.requestVideoFrameCallback((n, m) => onFrame(gen, n, m))
+}
+
+/** Native capture: one call per shared texture from main. The frame is closed before this
+ *  returns, and the preload then releases the texture back to the module. */
+function onNativeFrame(texture: { getVideoFrame(): VideoFrame }, meta: NativeFrameMeta): void {
+  if (source !== 'native' || !nativeLive) return
+  const frame = texture.getVideoFrame()
+  try {
+    if (meta.repeat) repeatTimes.push(performance.now())
+    skippedFrames += meta.missed
+    // The module stamps frames in epoch ms from the system's high-resolution clock;
+    // performance.timeOrigin + performance.now() is the same clock here.
+    const captureT = meta.presentEpochMs - performance.timeOrigin
+    processFrame(
+      { source: frame, width: frame.displayWidth, height: frame.displayHeight },
+      captureT,
+      performance.now()
+    )
+    if (selfCheckRunning) {
+      checkFrame?.close()
+      checkFrame = frame.clone()
+    }
+  } finally {
+    frame.close()
+  }
+}
+
+/** Draw the latest captured frame for the capture-leak self-check. */
+function drawLatestFrame(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  if (source === 'native') {
+    if (checkFrame) ctx.drawImage(checkFrame, 0, 0, width, height)
+  } else {
+    ctx.drawImage(video, 0, 0, width, height)
+  }
 }
 
 let selfCheckRunning = false
 async function selfCheck(): Promise<void> {
-  if (selfCheckRunning || !track) return
+  if (selfCheckRunning || !captureLive()) return
   selfCheckRunning = true
   try {
-    api.sendSelfCheckResult(await runSelfCheck(video, setTint, debugTint))
+    api.sendSelfCheckResult(await runSelfCheck(drawLatestFrame, setTint, debugTint))
   } catch (error) {
     api.sendSelfCheckResult({ verdict: 'error', cycles: [], detail: String(error) })
   } finally {
     selfCheckRunning = false
+    checkFrame?.close()
+    checkFrame = null
   }
+}
+
+function resetCaptureCounters(): void {
+  callbackTimes.length = 0
+  repeatTimes.length = 0
+  delays.length = 0
+  framesTotal = 0
+  skippedFrames = 0
+  lastPresented = -1
+  lastCaptureT = -Infinity
+  captureOpenedAt = performance.now()
+  // A restart leaves a gap in the timestamps; start detection from a clean slate.
+  analysis?.reset()
+}
+
+/**
+ * Native capture (trail #9): register the texture receiver, then ask main to start the
+ * module. Resolves false, after logging why, if it cannot start; the caller then opens
+ * Chromium's capture instead.
+ */
+async function openNativeCapture(): Promise<boolean> {
+  window.nativeCapture.onFrame((texture, meta) => onNativeFrame(texture, meta))
+  api.onNativeCaptureError((message) => console.error(`[native capture] ${message}`))
+  source = 'native'
+  resetCaptureCounters()
+  nativeLive = true
+  const result = await api.startNativeCapture()
+  if (!result.ok) {
+    nativeLive = false
+    source = 'chromium'
+    console.error(`[native capture] could not start, using Chromium's capture: ${result.error}`)
+    return false
+  }
+  const i = result.info
+  console.log(`[native capture] ${i.width}x${i.height} from ${i.output} via ${i.method}`)
+  return true
 }
 
 async function openCapture(size: CaptureSize): Promise<void> {
@@ -142,14 +260,7 @@ async function openCapture(size: CaptureSize): Promise<void> {
     track = null
     old.stop()
   }
-  callbackTimes.length = 0
-  delays.length = 0
-  framesTotal = 0
-  skippedFrames = 0
-  lastPresented = -1
-  captureOpenedAt = performance.now()
-  // A restart leaves a gap in the timestamps; start detection from a clean slate.
-  analysis?.reset()
+  resetCaptureCounters()
   const stream = await openScreenStream(CAPTURE_FPS, size.maxWidth, size.maxHeight)
   const newTrack = stream.getVideoTracks()[0]
   if (!newTrack) throw new Error('stream has no video track')
@@ -215,14 +326,14 @@ function startAnalysis(settings: Settings): void {
   )
 }
 
-/** The user's settings, from main. If main cannot be asked, the defaults: protection with
- *  the spec's detector beats no protection. */
-async function loadSettings(): Promise<Settings> {
+/** The user's settings and the capture choice, from main. If main cannot be asked, the
+ *  defaults: protection with the spec's detector beats no protection. */
+async function loadInit(): Promise<Pick<InitInfo, 'settings' | 'nativeCapture'>> {
   try {
-    return (await api.getInit()).settings
+    return await api.getInit()
   } catch (error) {
     console.error('[settings] could not load, using the defaults', error)
-    return DEFAULT_SETTINGS
+    return { settings: DEFAULT_SETTINGS, nativeCapture: false }
   }
 }
 
@@ -234,7 +345,7 @@ function startHeartbeat(): void {
     api.sendHeartbeat({
       state: analysis ? analysis.state : 'off',
       frameAgeMs: lastFrameAt === null ? null : performance.now() - lastFrameAt,
-      captureLive: track !== null && track.readyState === 'live'
+      captureLive: captureLive()
     })
   }, HEARTBEAT_MS)
 }
@@ -255,16 +366,21 @@ async function start(): Promise<void> {
   api.onProtection((enabled, reason) => analysis?.setEnabled(enabled, reason))
   api.onDebugFreeze(freeze)
   api.onSettings((settings) => analysis?.configure(detectorOptionsFor(settings)))
-  const settings = await loadSettings()
+  const init = await loadInit()
   try {
-    startAnalysis(settings)
+    startAnalysis(init.settings)
   } catch (error) {
     pipelineFailed(error)
   }
   try {
-    await openCapture({ maxWidth: CAPTURE_MAX_WIDTH, maxHeight: CAPTURE_MAX_HEIGHT })
+    const native = init.nativeCapture && (await openNativeCapture())
+    if (!native) await openCapture({ maxWidth: CAPTURE_MAX_WIDTH, maxHeight: CAPTURE_MAX_HEIGHT })
     api.onSelfCheckRun(() => void selfCheck())
     api.onCaptureRestart((size) => {
+      if (source === 'native') {
+        console.warn('[capture] size cap ignored: the native capture is always full size')
+        return
+      }
       openCapture(size).catch((error) => api.sendCaptureError(String(error)))
     })
     // The automatic capture-leak check toggles the tint, so it only runs when the tint is

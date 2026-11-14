@@ -1,7 +1,7 @@
 // Speed test for the native capture module, in plain Node (no Electron).
 //
 //   npm run native:build
-//   node native/capture/speedtest.mjs [seconds]
+//   node native/capture/speedtest.mjs [seconds] [repeatMs]
 //
 // Desktop Duplication only delivers a frame when the screen changed, so run it while
 // something on screen moves every display frame (a moving bar, a video). Each received
@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url)
 const capture = require('./build/Release/calmframe_capture.node')
 
 const seconds = Number(process.argv[2] ?? 10)
+const repeatMs = Number(process.argv[3] ?? 0)
+let repeats = 0
 let frames = 0
 const perSecond = []
 const readyToJs = []
@@ -22,11 +24,13 @@ const presentToReady = []
 const info = capture.start(
   (frame) => {
     frames++
+    if (frame.repeat) repeats++
     presentToReady.push(frame.readyMs - frame.presentMs)
     readyToJs.push(capture.now() - frame.readyMs)
     capture.release(frame.slot)
   },
-  (message) => console.error(`[capture error] ${message}`)
+  (message) => console.error(`[capture error] ${message}`),
+  { repeatMs }
 )
 console.log('started', info)
 
@@ -38,8 +42,9 @@ const percentile = (values, p) => {
 
 const tick = setInterval(() => {
   perSecond.push(frames)
-  console.log(`${frames} fps`, JSON.stringify(capture.stats()))
+  console.log(`${frames} fps (${repeats} repeats)`, JSON.stringify(capture.stats()))
   frames = 0
+  repeats = 0
 }, 1000)
 
 setTimeout(() => {

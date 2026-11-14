@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, sharedTexture } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import { IPC, type CalmFrameApi } from '../shared/messages'
+import { IPC, type CalmFrameApi, type NativeFrameMeta } from '../shared/messages'
 
 const api: CalmFrameApi = {
   sendCaptureStats: (stats) => ipcRenderer.send(IPC.captureStats, stats),
@@ -26,6 +26,10 @@ const api: CalmFrameApi = {
   },
   onDebugFreeze: (callback) => {
     ipcRenderer.on(IPC.debugFreeze, (_event, ms) => callback(ms))
+  },
+  startNativeCapture: () => ipcRenderer.invoke(IPC.startNativeCapture),
+  onNativeCaptureError: (callback) => {
+    ipcRenderer.on(IPC.nativeCaptureError, (_event, message) => callback(message))
   },
   getInit: () => ipcRenderer.invoke(IPC.getInit),
   onSettings: (callback) => {
@@ -71,10 +75,31 @@ const api: CalmFrameApi = {
   }
 }
 
+/**
+ * Native capture (trail #9). Main sends each frame as a shared texture; the page takes a
+ * VideoFrame from it, uploads it and closes the frame before the callback returns. Then
+ * this releases the page's reference, and once main's is released too the native module
+ * may reuse the texture. Same shape as Electron's own sharedTexture test fixture.
+ */
+const nativeCapture = {
+  onFrame: (
+    callback: (texture: Electron.SharedTextureImported, meta: NativeFrameMeta) => void
+  ): void => {
+    sharedTexture.setSharedTextureReceiver(async (data, meta) => {
+      try {
+        callback(data.importedSharedTexture, meta as NativeFrameMeta)
+      } finally {
+        data.importedSharedTexture.release()
+      }
+    })
+  }
+}
+
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
+    contextBridge.exposeInMainWorld('nativeCapture', nativeCapture)
   } catch (error) {
     console.error(error)
   }
@@ -83,4 +108,6 @@ if (process.contextIsolated) {
   window.electron = electronAPI
   // @ts-ignore (define in dts)
   window.api = api
+  // @ts-ignore (define in dts)
+  window.nativeCapture = nativeCapture
 }

@@ -21,7 +21,8 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  * If it shows as a black rectangle, the capture is near black.
  */
 export async function runSelfCheck(
-  video: HTMLVideoElement,
+  /** Draw the latest captured frame scaled into the 2D context. */
+  drawFrame: (ctx: CanvasRenderingContext2D, width: number, height: number) => void,
   setTint: (on: boolean) => void,
   tintAfter: boolean
 ): Promise<SelfCheckResult> {
@@ -32,7 +33,7 @@ export async function runSelfCheck(
   if (!ctx) return { verdict: 'error', cycles: [], detail: 'no 2D canvas context' }
 
   const sampleOnce = (): { r: number; g: number; b: number; black: number } => {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    drawFrame(ctx, canvas.width, canvas.height)
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
     let r = 0
     let g = 0

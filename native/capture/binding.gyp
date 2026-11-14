@@ -12,7 +12,7 @@
         "UNICODE",
         "_UNICODE"
       ],
-      "libraries": ["d3d11.lib", "dxgi.lib"],
+      "libraries": ["d3d11.lib", "dxgi.lib", "winmm.lib"],
       "msvs_settings": {
         "VCCLCompilerTool": {
           "AdditionalOptions": ["/W3"],

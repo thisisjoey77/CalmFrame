@@ -27,6 +27,7 @@ import {
   FPS_SWEEP_MEASURE_MS,
   FPS_SWEEP_WARMUP_MS,
   KILL_SWITCH_ACCELERATOR,
+  NATIVE_CAPTURE_ENV,
   OVERLAY_BOTTOM_INSET,
   SETTINGS_FILE_NAME,
   STATUS_REFRESH_MS,
@@ -43,6 +44,7 @@ import {
   type HazardEvent,
   type Heartbeat,
   type InitInfo,
+  type NativeCaptureStart,
   type OverlayState,
   type SelfCheckResult,
   type SmoothSelfTestResult,
@@ -52,6 +54,7 @@ import {
 } from '../shared/messages'
 import type { Settings } from '../shared/settings'
 import { KILL_SWITCH_LABEL, STATUS_LABEL, deriveStatus, type StatusView } from '../shared/status'
+import { NativeCapture } from './nativeCapture'
 import { SettingsStore } from './settingsStore'
 import { CalmTray } from './tray'
 
@@ -70,6 +73,9 @@ let quitting = false
 
 /** Debug-only: cycle through DEBUG_CAPTURE_SIZES and log the frame rate of each. */
 const fpsSweep = process.env['CALMFRAME_FPS_SWEEP'] === '1'
+/** Stretch (trail #9): capture with the native module instead of Chromium. */
+const nativeCaptureRequested = process.env[NATIVE_CAPTURE_ENV] === '1'
+const nativeCapture = new NativeCapture()
 /** Debug-only: show the Phase 0 red tint on the overlay, and run the capture-leak check. */
 const debugTint = process.env['CALMFRAME_DEBUG_TINT'] === '1'
 /** Debug-only: also open the Phase 0 to 4 debug window (capture tools, per-stage latency).
@@ -227,8 +233,14 @@ function createOverlayWindow(): BrowserWindow {
 
   // Fail open: if the overlay renderer dies, hide the overlay.
   win.webContents.on('render-process-gone', (_event, details) => {
+    nativeCapture.stop()
     disableProtection(`The overlay stopped (${details.reason})`)
   })
+  // A reload or a closed window must not leave the native module sending to nobody.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) nativeCapture.stop()
+  })
+  win.webContents.on('destroyed', () => nativeCapture.stop())
 
   loadPage(win, 'overlay', debugTint ? 'tint' : '')
   return win
@@ -522,8 +534,30 @@ function broadcastSettings(settings: Settings): void {
 function installIpc(): void {
   ipcMain.handle(IPC.getInit, (): InitInfo => ({
     settings: (store as SettingsStore).settings,
-    startedAtWallMs
+    startedAtWallMs,
+    nativeCapture: nativeCaptureRequested
   }))
+
+  // The overlay registers its texture receiver first, then asks for the frames.
+  ipcMain.handle(IPC.startNativeCapture, (event): NativeCaptureStart => {
+    const overlay = overlayWin
+    if (!alive(overlay) || event.sender !== overlay.webContents) {
+      return { ok: false, error: 'only the overlay can start native capture' }
+    }
+    try {
+      const info = nativeCapture.start(overlay.webContents, (message) => {
+        console.error(`[native capture] error: ${message}`)
+        if (alive(overlayWin)) overlayWin.webContents.send(IPC.nativeCaptureError, message)
+      })
+      console.log(
+        `[native capture] started: ${info.width}x${info.height} on ${info.output} (${info.adapter}, LUID ${info.adapterLuid}), ${info.method}, ${info.slots} slots`
+      )
+      return { ok: true, info }
+    } catch (error) {
+      console.error(`[native capture] could not start: ${String(error)}`)
+      return { ok: false, error: String(error) }
+    }
+  })
 
   ipcMain.on(IPC.updateSettings, (_event, patch: unknown) => {
     if (!store) return
@@ -560,7 +594,11 @@ function installIpc(): void {
           stats.delayMedianMs === null
             ? 'delay n/a (no captureTime)'
             : `delay median ${fmt(stats.delayMedianMs, 1)} ms, p95 ${fmt(stats.delayP95Ms, 1)} ms`
-        return `[capture] ${stats.fps} fps | ${delay} | ${stats.width}x${stats.height} | skipped ${stats.skippedFrames}/${stats.framesTotal}`
+        const native = stats.source === 'native' ? nativeCapture.stats() : null
+        const nativeText = native
+          ? ` | native: ${stats.repeats} repeats/s, missed ${native.missedPresents}, no free slot ${native.droppedNoSlot}, access lost ${native.accessLost}, send errors ${native.sendErrors}${native.lastSendError ? ` (${native.lastSendError})` : ''}`
+          : ''
+        return `[capture] ${stats.source} ${stats.fps} fps | ${delay} | ${stats.width}x${stats.height} | skipped ${stats.skippedFrames}/${stats.framesTotal}${nativeText}`
       })
     }
   })
@@ -764,6 +802,7 @@ app.on('before-quit', () => {
 })
 
 app.on('will-quit', () => {
+  nativeCapture.stop()
   globalShortcut.unregisterAll()
   store?.flush()
   tray?.destroy()

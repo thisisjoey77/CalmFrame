@@ -46,7 +46,7 @@ import { FlashEventTracker, type FlashEvent } from '../core/events'
 import { OverlayStateMachine, type OverlayStateName, type StateOutput } from '../core/stateMachine'
 import { encodeGridRgba8 } from '../core/thumbnail'
 import { ViewerCheck, type ViewerCheckResult } from '../core/viewerCheck'
-import type { GridPass, GridReadback } from './gridPass'
+import type { FrameImage, GridPass, GridReadback } from './gridPass'
 import type { SmoothPass } from './smoothPass'
 import { SampleRing } from './stats'
 
@@ -194,12 +194,12 @@ export class LiveAnalysis {
    * @param tMs the frame's capture timestamp (performance clock)
    * @param captureFps measured capture rate, for the filter's frames per half-cycle
    */
-  frame(video: HTMLVideoElement, tMs: number, captureFps: number): void {
+  frame(image: FrameImage, tMs: number, captureFps: number): void {
     if (this.stopped) return
     this.captureFps = captureFps
     const decided = this.pass.collect(this.onGrid)
     const alpha = this.alpha
-    if (this.pass.analyse(video, tMs, alpha)) {
+    if (this.pass.analyse(image, tMs, alpha)) {
       const t0 = performance.now()
       this.smooth.update(this.pass.width, this.pass.height, alpha)
       this.smoothMs.push(performance.now() - t0)

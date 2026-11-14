@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_6.h>
+#include <timeapi.h>
 #include <wrl/client.h>
 
 #include <napi.h>
@@ -71,6 +72,9 @@ struct FrameEvent {
   double presentEpochMs;  // the same instant as Unix epoch ms
   double readyMs;         // QPC time the copy into the slot had finished, in ms
   uint32_t accumulatedFrames;
+  // True when the screen had not changed, and the latest frame is sent again so the
+  // caller keeps sampling at a steady rate.
+  bool repeat;
 };
 
 struct ErrorEvent {
@@ -106,6 +110,10 @@ void DeliverFrame(Napi::Env env, Napi::Function callback, FrameEvent* data) {
   SetNumber(env, frame, "presentEpochMs", event->presentEpochMs);
   SetNumber(env, frame, "readyMs", event->readyMs);
   SetNumber(env, frame, "accumulatedFrames", event->accumulatedFrames);
+  napi_value repeat;
+  if (napi_get_boolean(env, event->repeat, &repeat) == napi_ok) {
+    napi_set_named_property(env, frame, "repeat", repeat);
+  }
   napi_value undefined;
   if (napi_get_undefined(env, &undefined) != napi_ok) return;
   napi_call_function(env, undefined, callback, 1, &frame, nullptr);
@@ -132,13 +140,18 @@ struct Stats {
   std::atomic<uint64_t> timeouts{0};
   std::atomic<uint64_t> accessLost{0};
   std::atomic<uint64_t> missedPresents{0};
+  std::atomic<uint64_t> repeats{0};
 };
 
 class Capture {
  public:
   ~Capture() { Stop(); }
 
-  bool Start(Napi::Env env, Napi::Function onFrame, Napi::Function onError, std::string* error) {
+  // repeatMs: when the screen has not changed for this long, send the latest frame again.
+  // 0 sends only changed frames.
+  bool Start(Napi::Env env, Napi::Function onFrame, Napi::Function onError, double repeatMs,
+             std::string* error) {
+    repeatMs_ = repeatMs > 0 ? repeatMs : 0;
     LARGE_INTEGER frequency;
     QueryPerformanceFrequency(&frequency);
     qpcFrequency_ = static_cast<double>(frequency.QuadPart);
@@ -169,6 +182,9 @@ class Capture {
     onError_ = Napi::ThreadSafeFunction::New(env, onError, "calmframe-capture-error", 0, 1);
     onFrame_.Unref(env);
     onError_.Unref(env);
+    // Waits (AcquireNextFrame's timeout) otherwise round up to the 15.6 ms system tick,
+    // which would turn a 16 ms repeat into about 31 ms.
+    if (repeatMs_ > 0) timerPeriodSet_ = timeBeginPeriod(1) == TIMERR_NOERROR;
     generation_ = ++g_generation;
     running_ = true;
     started_ = true;
@@ -181,6 +197,8 @@ class Capture {
     ++g_generation;
     running_ = false;
     if (thread_.joinable()) thread_.join();
+    if (timerPeriodSet_) timeEndPeriod(1);
+    timerPeriodSet_ = false;
     onFrame_.Release();
     onError_.Release();
     Reset();
@@ -218,6 +236,7 @@ class Capture {
     out.Set("timeouts", static_cast<double>(stats_.timeouts));
     out.Set("accessLost", static_cast<double>(stats_.accessLost));
     out.Set("missedPresents", static_cast<double>(stats_.missedPresents));
+    out.Set("repeats", static_cast<double>(stats_.repeats));
     int busy = 0;
     for (const Slot& s : slots_) busy += s.busy ? 1 : 0;
     out.Set("busySlots", busy);
@@ -372,6 +391,45 @@ class Capture {
     if (onError_.NonBlockingCall(event, DeliverError) != napi_ok) delete event;
   }
 
+  void Emit(int slot, double presentMs, double presentEpochMs, double readyMs,
+            uint32_t accumulatedFrames, bool repeat) {
+    auto* event = new FrameEvent{generation_,
+                                 slot,
+                                 reinterpret_cast<uint64_t>(slots_[slot].handle),
+                                 width_,
+                                 height_,
+                                 presentMs,
+                                 presentEpochMs,
+                                 readyMs,
+                                 accumulatedFrames,
+                                 repeat};
+    slots_[slot].busy = true;
+    lastEmitMs_ = NowMs();
+    if (onFrame_.NonBlockingCall(event, DeliverFrame) == napi_ok) {
+      ++stats_.emitted;
+      if (repeat) ++stats_.repeats;
+    } else {
+      slots_[slot].busy = false;
+      delete event;
+    }
+  }
+
+  // The screen has not changed for repeatMs: send the latest frame again, stamped now,
+  // since that is what the screen shows now. If the caller still holds that slot, wait
+  // another interval instead of spinning.
+  void Repeat() {
+    if (repeatMs_ <= 0 || lastSlot_ < 0) return;
+    if (NowMs() - lastEmitMs_ < repeatMs_) return;
+    if (slots_[lastSlot_].busy) {
+      lastEmitMs_ = NowMs();
+      return;
+    }
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    Emit(lastSlot_, QpcToMs(now.QuadPart), QpcToEpochMs(now.QuadPart), QpcToMs(now.QuadPart), 0,
+         true);
+  }
+
   void Loop() {
     while (running_) {
       if (!duplication_) {
@@ -382,11 +440,18 @@ class Capture {
           continue;
         }
       }
+      // Wait for a new frame, but only until the latest one is due to be sent again.
+      UINT timeout = kAcquireTimeoutMs;
+      if (repeatMs_ > 0 && lastSlot_ >= 0) {
+        double left = repeatMs_ - (NowMs() - lastEmitMs_);
+        timeout = left > 0 ? static_cast<UINT>(left + 0.999) : 0;
+      }
       DXGI_OUTDUPL_FRAME_INFO info = {};
       ComPtr<IDXGIResource> resource;
-      HRESULT hr = duplication_->AcquireNextFrame(kAcquireTimeoutMs, &info, &resource);
+      HRESULT hr = duplication_->AcquireNextFrame(timeout, &info, &resource);
       if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
         ++stats_.timeouts;
+        Repeat();
         continue;
       }
       if (hr == DXGI_ERROR_ACCESS_LOST) {
@@ -432,23 +497,10 @@ class Capture {
       duplication_->ReleaseFrame();
       LARGE_INTEGER ready;
       QueryPerformanceCounter(&ready);
-
-      auto* event = new FrameEvent{generation_,
-                                   slot,
-                                   reinterpret_cast<uint64_t>(slots_[slot].handle),
-                                   width_,
-                                   height_,
-                                   QpcToMs(info.LastPresentTime.QuadPart),
-                                   QpcToEpochMs(info.LastPresentTime.QuadPart),
-                                   QpcToMs(ready.QuadPart),
-                                   info.AccumulatedFrames};
-      slots_[slot].busy = true;
-      if (onFrame_.NonBlockingCall(event, DeliverFrame) == napi_ok) {
-        ++stats_.emitted;
-      } else {
-        slots_[slot].busy = false;
-        delete event;
-      }
+      lastSlot_ = slot;
+      Emit(slot, QpcToMs(info.LastPresentTime.QuadPart),
+           QpcToEpochMs(info.LastPresentTime.QuadPart), QpcToMs(ready.QuadPart),
+           info.AccumulatedFrames, false);
     }
   }
 
@@ -477,6 +529,11 @@ class Capture {
   ComPtr<ID3D11Query> query_;
   Slot slots_[kSlots];
   int nextSlot_ = 0;
+  // The slot holding the newest desktop image, and when a frame was last sent.
+  int lastSlot_ = -1;
+  double lastEmitMs_ = 0.0;
+  double repeatMs_ = 0.0;
+  bool timerPeriodSet_ = false;
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   std::string adapterName_;
@@ -500,7 +557,7 @@ std::unique_ptr<Capture> g_capture;
 Napi::Value Start(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 2 || !info[0].IsFunction() || !info[1].IsFunction()) {
-    Napi::TypeError::New(env, "start(onFrame, onError) needs two functions")
+    Napi::TypeError::New(env, "start(onFrame, onError, options) needs two functions")
         .ThrowAsJavaScriptException();
     return env.Undefined();
   }
@@ -508,9 +565,16 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
     Napi::Error::New(env, "capture is already running").ThrowAsJavaScriptException();
     return env.Undefined();
   }
+  // Optional third argument: { repeatMs }.
+  double repeatMs = 0;
+  if (info.Length() > 2 && info[2].IsObject()) {
+    Napi::Value value = info[2].As<Napi::Object>().Get("repeatMs");
+    if (value.IsNumber()) repeatMs = value.As<Napi::Number>().DoubleValue();
+  }
   auto capture = std::make_unique<Capture>();
   std::string error;
-  if (!capture->Start(env, info[0].As<Napi::Function>(), info[1].As<Napi::Function>(), &error)) {
+  if (!capture->Start(env, info[0].As<Napi::Function>(), info[1].As<Napi::Function>(), repeatMs,
+                      &error)) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return env.Undefined();
   }

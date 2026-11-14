@@ -399,3 +399,16 @@ export const VALIDATE_CLIP_HEIGHT = 1080
 export const VALIDATE_CLIP_CRF = 4
 /** Verdicts are compared one second at a time ("Comparison with IRIS", step 4). */
 export const VALIDATE_SECOND_MS = 1000
+
+// ---------------------------------------------------------------------------
+// Stretch: native screen capture (native/capture, trail #9)
+// ---------------------------------------------------------------------------
+
+/** Environment variable that switches the overlay to the native capture module
+ *  (Desktop Duplication into shared textures) instead of Chromium's screen capture. */
+export const NATIVE_CAPTURE_ENV = 'CALMFRAME_NATIVE_CAPTURE'
+/** Desktop Duplication only delivers a frame when the screen changed. When nothing has
+ *  changed for this long, the module sends the latest frame again, so detection and the
+ *  smoothing filter keep sampling at a steady rate, as with Chromium's capture. Just over
+ *  one 60 Hz frame (16.7 ms), so a screen that changes every frame gets no repeats. */
+export const NATIVE_CAPTURE_REPEAT_MS = 20
