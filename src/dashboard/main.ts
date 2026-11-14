@@ -173,7 +173,10 @@ const stateText: Record<DetectionStats['state'], string> = {
   safe: 'Safe',
   active: 'Active (smoothing)',
   release: 'Release (fading out)',
-  disabled: 'Disabled'
+  disabled: 'Disabled',
+  // Step 7a, the optional pre-arm. Off by default (PREARM_ENABLED).
+  armed: 'Armed (pre-arm, light smoothing)',
+  disarming: 'Disarming (pre-arm fading out)'
 }
 
 function ms(v: number | null, digits = 1): string {

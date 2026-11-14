@@ -25,6 +25,8 @@ import {
   GRID_COLS,
   GRID_ROWS,
   LUMINANCE_THRESHOLD,
+  PREARM_ENABLED,
+  PREARM_TRIGGER_STREAK,
   RED_THRESHOLD,
   STRICT_TRIGGER_COUNT,
   type AreaMode,
@@ -63,6 +65,10 @@ export interface DetectorOptions {
   concurrency?: ConcurrencyRule
   /** IRIS extended-failure rule. For the validator's like-for-like comparison only. */
   extendedFailure?: boolean
+  /** Pre-arm (Step 7a): also report whether cells with a transition in the last
+   *  fast-transition interval already fill the area limit, one or two reversals before the
+   *  trigger could fire. Off by default; it does not change the hazard. */
+  prearm?: boolean
   /** Values per cell in the input: 3 (RGB, the default) or 4 (RGBA, as read back from
    *  the GPU). Alpha is ignored. */
   inputChannels?: 3 | 4
@@ -86,6 +92,11 @@ export interface DetectorResult {
   /** Largest k such that cells with count >= k fill 25% of some window, divided by 2:
    *  flashes per second over a hazardous area, plotted against the limit at 3. */
   graphValue: number
+  /** Pre-arm (Step 7a): armed cells (luminance streak >= 1) fill at least the area limit of
+   *  some window. Always false unless the option is on. A hazard implies it. */
+  arm: boolean
+  /** The largest armed fraction of any window. 0 unless the option is on. */
+  armAreaFraction: number
   /** 1 where a cell is hot for luminance or red. For regional smoothing later. */
   hotMask: Uint8Array
   hotCells: number
@@ -103,6 +114,7 @@ export class Detector {
   private readonly trigger: TriggerMode
   private readonly streakN: number
   private readonly extendedEnabled: boolean
+  private readonly prearmEnabled: boolean
   private readonly channels: number
 
   private readonly lum = new TransitionTracker({
@@ -121,6 +133,7 @@ export class Detector {
   private readonly redRho = new Float64Array(GRID_CELLS)
   private readonly lumHot = new Uint8Array(GRID_CELLS)
   private readonly redHot = new Uint8Array(GRID_CELLS)
+  private readonly armHot = new Uint8Array(GRID_CELLS)
   private readonly table = new SummedAreaTable(GRID_COLS, GRID_ROWS)
   /** Null when the concurrency rule is off. */
   private readonly gate: ConcurrencyGate | null
@@ -137,6 +150,7 @@ export class Detector {
     this.trigger = options.trigger ?? DEFAULT_TRIGGER_MODE
     this.streakN = options.streakN ?? EARLY_TRIGGER_STREAK
     this.extendedEnabled = options.extendedFailure ?? false
+    this.prearmEnabled = options.prearm ?? PREARM_ENABLED
     this.channels = options.inputChannels ?? 3
     this.window = areaWindow(
       options.areaMode ?? DEFAULT_AREA_MODE,
@@ -158,6 +172,8 @@ export class Detector {
       flashSize: 0,
       areaFraction: 0,
       graphValue: 0,
+      arm: false,
+      armAreaFraction: 0,
       hotMask: new Uint8Array(GRID_CELLS),
       hotCells: 0,
       luminanceTransitions: 0,
@@ -219,6 +235,9 @@ export class Detector {
     const luminanceHazard = lumArea >= AREA_LIMIT
     const redHazard = redArea >= AREA_LIMIT
 
+    // Step 7a: the same area rule over cells that have reversed at all, not three times.
+    const armArea = this.prearmEnabled ? this.windowFraction(this.markArmed()) : 0
+
     // Step 8 graph value. Reuses the summed-area table, so it runs after the area rule.
     const lumK = this.graphCount(this.lum)
     const redK = this.graphCount(this.red)
@@ -238,6 +257,8 @@ export class Detector {
     out.type =
       redHazard || redExtended ? 'red' : luminanceHazard || lumExtended ? 'luminance' : 'none'
     out.areaFraction = Math.max(lumArea, redArea)
+    out.arm = armArea >= AREA_LIMIT
+    out.armAreaFraction = armArea
     out.graphValue = Math.max(lumK, redK) / 2
     out.luminanceTransitions = this.lum.transitionsThisFrame
     out.redTransitions = this.red.transitionsThisFrame
@@ -299,6 +320,19 @@ export class Detector {
       }
     }
     return n
+  }
+
+  /**
+   * Step 7a: cells whose luminance streak has reached PREARM_TRIGGER_STREAK, which at 1 is
+   * every cell that recorded a transition within the fast-transition interval. Independent
+   * of the trigger mode, since pre-arm is defined on the streak either way.
+   */
+  private markArmed(): Uint8Array {
+    const armed = this.armHot
+    const streak = this.lum.streak
+    const needed = PREARM_TRIGGER_STREAK
+    for (let i = 0; i < CELLS; i++) armed[i] = streak[i] >= needed ? 1 : 0
+    return armed
   }
 
   private windowFraction(hot: Uint8Array): number {
