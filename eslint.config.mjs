@@ -3,7 +3,7 @@ import tseslint from '@electron-toolkit/eslint-config-ts'
 import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  { ignores: ['**/node_modules', '**/dist', '**/out', 'native/capture/build'] },
   tseslint.configs.recommended,
   eslintConfigPrettier,
   {
@@ -37,7 +37,7 @@ export default defineConfig(
     // the spec requires one static page with no build step and no dependencies. TypeScript
     // annotations cannot appear in it, so the rule that demands them does not apply.
     // Its behaviour is covered by tools/strobe/strobe.test.ts instead.
-    files: ['tools/strobe/**/*.js'],
+    files: ['tools/strobe/**/*.js', 'native/capture/*.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off'
     }

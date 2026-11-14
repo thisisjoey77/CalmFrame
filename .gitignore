@@ -13,3 +13,6 @@ __pycache__/
 
 # Generated test clips are rebuilt by tools/validate; keep results in measurements/
 tools/validate/clips/
+
+# Native capture module build output (npm run native:build)
+native/capture/build/

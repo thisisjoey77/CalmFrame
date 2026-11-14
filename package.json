@@ -23,7 +23,8 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "install-electron && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win"
+    "build:win": "npm run build && electron-builder --win",
+    "native:build": "node-gyp rebuild --directory native/capture"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -38,6 +39,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",
     "eslint": "^10.12.0",
+    "node-addon-api": "^8.9.2",
     "prettier": "^3.9.10",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",
