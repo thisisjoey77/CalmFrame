@@ -88,6 +88,19 @@ We don't know the judging criteria yet (ask at the Saturday 4:30 PM MLH workshop
 3. In the clone, run `entire enable --agent claude-code`. Git hooks aren't cloned, so this step reinstalls them. `entire status` should then show the repo as enabled.
 4. Start Claude Code in the clone. Its first message should be "Read CLAUDE.md and docs/SPEC.md".
 
+## Coder (we're entering the Coder for Good side challenge)
+
+The challenge requires that we build, test and collaborate in Coder workspaces. The organizers host Coder at https://coder.c1.workshop.cdr.dev (GitHub sign-in, "Tech Stack Builder" template). The team workspace is `thisisjoey77/CalmFrame`. It clones the GitHub mirror into `~/CalmFrame`.
+
+- **What runs there:** `src/core` and its tests, `tools/strobe` and `tools/validate` (Node, Python, ffmpeg). The overlay can't, because it needs the real Windows desktop. Say that plainly in the write-up.
+- **Mac work happens in the workspace** where possible (core, validator, IRIS comparison), pushed from there to GitHub. Pull it on another machine and push it on to Entire, so both remotes match (see the GitHub mirror rule above).
+- **From the Windows laptop, Claude Code drives the workspace with the Coder CLI** at `C:\Program Files\Coder\bin\coder.exe` (not on PATH; in Git Bash use `"/c/Program Files/Coder/bin/coder.exe"`). The user is logged in. If a command says otherwise, ask the user to run `& "C:\Program Files\Coder\bin\coder.exe" login https://coder.c1.workshop.cdr.dev` in their own terminal. Never ask for the session token in chat: transcripts are uploaded.
+- **After pushing a branch to GitHub, run the test suite in the workspace and add a line to `docs/CODER-LOG.md`.** That log is the "tested in Coder" evidence. Node comes from nvm, which non-interactive shells don't load, and the tests don't need Electron:
+  ```
+  coder.exe ssh thisisjoey77/CalmFrame -- 'export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; cd ~/CalmFrame && git fetch -q origin && git checkout -q <branch> && git pull -q --ff-only origin <branch> && npm ci --ignore-scripts && npx vitest run'
+  ```
+- The workspace runs Node 26 and this laptop Node 24.12. The client/server version-mismatch warning (2.39 vs 2.38) is harmless.
+
 ## Safety and wording
 
 - Nobody with known or suspected photosensitivity runs strobe tests. Use low-contrast test flashes by default, in short bursts, in a small window.
