@@ -82,6 +82,35 @@ export const CAPTURE_MAX_HEIGHT = 540
 // Other fixed values the spec names outside the defaults table
 // ---------------------------------------------------------------------------
 
+/** Pre-arm (Step 7a), an optional state ahead of the early trigger that starts smoothing on
+ *  the first reversal instead of the third. Off by default: arming on a single reversal also
+ *  arms on scene cuts and alt-tab, which costs about half a second of softening on ordinary
+ *  use. It belongs at the most sensitive end of the Phase 5 slider, past N = 2. */
+export const PREARM_ENABLED = false
+/** A cell is armed at this streak. 1 is the early trigger with N = 1, so arming inherits the
+ *  dark limit and the frame-gap streak reset. Step 7a. */
+export const PREARM_TRIGGER_STREAK = 1
+/** Filter strength while armed. The "How much flicker survives" table's 0.15 row: it leaves
+ *  0.24 of a full-contrast 10 Hz swing, about a quarter of the exposure. Still a flash by
+ *  the standard, which is what Active's adaptive alpha is for. Step 7a. */
+export const PREARM_ALPHA = 0.15
+/** Overlay opacity while armed. Showing the whole smoothed copy rather than blending: at 0.5
+ *  the live screen re-admits its own swing (0.5 x 1.0 + 0.5 x 0.24 = 0.62), so partial
+ *  transparency would barely help. Step 7a. */
+export const PREARM_OPACITY = 1
+/** Pre-arm's fade back to Safe. Shorter than the release fade, since pre-arm is not
+ *  protecting anything by the time it starts. Step 7a. */
+export const PREARM_FADE_MS = 300
+/** Longest a single armed episode may last. One counting window: if the trigger has not
+ *  fired within the window the detector measures over, there is nothing to wait for. Bounds
+ *  cases that keep a window freshly armed without any cell reaching the trigger, such as a
+ *  moving flashing band. Step 7a. */
+export const PREARM_MAX_MS = 1000
+/** Arm must have been absent this long before pre-arm may arm again, so that sustained
+ *  sub-trigger flashing gets one episode at its leading edge and nothing after. Matches
+ *  TRACKER_IDLE_RESET_MS, the time a cell takes to return to idle. Step 7a. */
+export const PREARM_REARM_QUIET_MS = 1000
+
 /** Scale for the red value v = RED_SCALE * max(0, R - G - B). Step 3. */
 export const RED_SCALE = 320
 

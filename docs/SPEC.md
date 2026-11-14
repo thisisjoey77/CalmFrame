@@ -171,6 +171,96 @@ A 60 Hz display can only show strobes at 30/n Hz: 30, 15, 10, 7.5, 6, 5 and so o
 
 These are predictions. Your slow-motion measurement replaces them. The table also shows why trigger choice beats raw latency: going from strict to early saves two flashes, while shaving 25 ms saves a quarter of one.
 
+### Step 7a: pre-arm (optional, off by default)
+
+The early trigger fires on the third fast reversal, so the first two reach the viewer at
+full contrast. Pre-arm is an optional state ahead of the trigger that starts smoothing on
+the **first** reversal, before the detector knows whether a strobe is coming.
+
+A cell is **armed** when its streak s ≥ 1, that is when it recorded a luminance transition
+within the fast-transition interval. This is the early trigger with N = 1, so arming
+inherits the dark-limit rule of Step 4 and the 250 ms frame-gap streak reset. The armed
+mask then goes through the same area rule as the trigger: pre-arm raises **arm** when armed
+cells fill at least 25% of some window. Luminance only; a red-only flash still waits for
+the trigger.
+
+| From | To | When |
+| --- | --- | --- |
+| Safe | Armed | arm is raised, and arm has been absent for the re-arm quiet period (1.0 s) |
+| Armed | Active | The trigger fires. The ordinary hazard path, with N unchanged |
+| Armed | Disarming | arm clears, or the armed cap (1.0 s) is reached |
+| Disarming | Safe | The pre-arm fade (0.3 s) completes. Only a hazard interrupts it, never arm |
+
+There is no separate hold. The arm signal already carries one: when it clears, no fast
+transition has arrived for 167 ms and the streak is dead, so the fade starts at once.
+
+The armed cap and the quiet period together bound how much of the time pre-arm can soften
+the screen. Continuously flashing content below the trigger gets **one** episode of at most
+1.3 s at its leading edge and nothing after that, because arm never goes quiet for long
+enough to re-arm. Content that flashes in bursts a second or more apart gets one episode
+per burst, which is the point of the feature.
+
+**N stays at 3 for full protection.** Two quick opposing transitions are locally
+indistinguishable from the start of a strobe: same direction, same interval, same swing. An
+explosion, a muzzle flash and the first two frames of a 10 Hz strobe all look alike, which
+is why Step 7 counts to three. Pre-arm changes when mitigation *starts*, not when the
+detector *decides*.
+
+#### What pre-arm does and does not buy
+
+It does not move the flash count of Step 7. With trigger count N, strobe frequency f and
+pipeline latency L, the viewer still sees
+
+```latex
+F \approx \frac{N - 1}{2} + f \cdot L
+```
+
+flashes before Active lands, because Active still waits for the third reversal. What changes
+is the amplitude of those F flashes, and only of some of them:
+
+- The **f · L** part is pipeline latency and pre-arm cannot touch it. Nothing can be on
+  screen until a frame has been captured, analysed and drawn, so the opening flash reaches
+  the viewer at full contrast whatever the detector does. At 10 Hz with L = 75 ms that is
+  0.75 of a flash.
+- The **(N − 1) / 2** part is the one pre-arm attenuates. Those flashes arrive while the
+  overlay is already showing a lightly smoothed copy at α = 0.15, which leaves 0.24 of a
+  full-contrast 10 Hz swing. That is still a flash by the standard, well above 0.10; it is
+  about a quarter of the exposure, not an exemption. At 10 Hz with N = 3 that is 1 flash of
+  the 1.75.
+
+So pre-arm reduces the intensity of the flashes before Active lands. It does not remove
+them, and it does not shorten L. Say it that way in the pitch: the first flash still gets
+through, as it does in Apple's implementation, and CalmFrame makes it a quarter as strong.
+
+#### Why it is off by default
+
+Arming on a single reversal means arming on things that are not hazards at all. A scene
+cut, alt-tab to a white page, a window closing onto the desktop: each is one large
+transition over most of the screen, so each arms pre-arm and softens the screen for about
+half a second. That is a visible cost paid on ordinary use for a benefit that only appears
+when a strobe follows.
+
+It therefore belongs at the **most sensitive position of the Phase 5 sensitivity slider**,
+past N = 2, rather than as a toggle of its own. The slider already runs from the most
+sensitive trigger to the strictest; pre-arm is simply one step further in that direction,
+and a user who has been hurt by flashing can choose it knowing what it costs. Build no UI
+for it before the slider exists.
+
+#### What the detector adds
+
+Two outputs alongside Step 8, both inert unless the option is on:
+
+- **arm** (boolean): armed cells fill at least the area limit of some window.
+- **arm area fraction**: the largest armed fraction of any window, for the dashboard.
+
+A hazard implies arm, since s ≥ 3 implies s ≥ 1, so pre-arm can never delay protection: by
+the time the trigger fires the detector is already armed. The extra area pass costs one
+summed-area build and one window sweep, and runs only when the option is on.
+
+The overlay state machine reports the requested smoothing as its own pair of values,
+separate from the α, d and opacity that Active and Release drive, so a renderer that
+ignores them behaves exactly as it did before pre-arm existed.
+
 ### Step 8: what the detector hands to the filter
 
 - **hazard** (boolean) and **type** (luminance or red).

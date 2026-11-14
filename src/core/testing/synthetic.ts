@@ -142,6 +142,8 @@ export interface FrameRecord {
   flashSize: number
   areaFraction: number
   graphValue: number
+  arm: boolean
+  armAreaFraction: number
   hotCells: number
   luminanceTransitions: number
   redTransitions: number
@@ -170,6 +172,8 @@ function record(f: SyntheticFrame, r: DetectorResult): FrameRecord {
     flashSize: r.flashSize,
     areaFraction: r.areaFraction,
     graphValue: r.graphValue,
+    arm: r.arm,
+    armAreaFraction: r.armAreaFraction,
     hotCells: r.hotCells,
     luminanceTransitions: r.luminanceTransitions,
     redTransitions: r.redTransitions
