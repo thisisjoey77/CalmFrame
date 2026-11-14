@@ -65,6 +65,7 @@ The spec says to start a fresh session for each phase, across two laptops. Entir
 - **Don't guess Entire flags.** Run `entire agent-help`, then `entire agent-help <command>`, or use the `entire` skill.
 - **Git Bash on Windows rewrites `/et/...` arguments into file paths.** Prefix those commands with `MSYS_NO_PATHCONV=1` (e.g. `MSYS_NO_PATHCONV=1 entire repo view /et/calmframe/calmframe`), or use PowerShell.
 - **Don't** edit Entire's hooks (in `.claude/settings.json` or `.git/hooks`), delete `refs/entire/*`, or rewrite pushed history.
+- **GitHub mirror, code only.** https://github.com/thisisjoey77/CalmFrame (remote `github`) is the public copy for Devpost and for the Coder workspaces. Entire's pre-push hook may upload session transcripts to whichever remote it is given, and the team decided transcripts stay on Entire. So push to GitHub only with `git push --no-verify github <branch>` (the user approved skipping the hook for this remote only), and never push `refs/entire/*` there. Pushes to `origin` (Entire) stay normal. Keep the two in step: after pulling work from one remote, push it to the other.
 - **Ask first.** Commands the CLI marks as user-owned (`enable`, `configure`, `login`, `repo`, `project`, `org`) are for the user to run. Suggest them; don't run them unless asked.
 - **Transcripts are uploaded with checkpoints.** Never put secrets, tokens or personal details in prompts or commits.
 
