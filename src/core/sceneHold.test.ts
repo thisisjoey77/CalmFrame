@@ -138,7 +138,9 @@ describe('game mode: hold the usual look (experimental)', () => {
     expect(hazardAfter).toBe(false)
     expect(worstDrift).toBeLessThan(TARGET_RESIDUAL)
     expect(worstPicture).toBeLessThan(TARGET_RESIDUAL)
-  })
+    // Two detectors over seconds of frames: about 4 s alone on the demo laptop, so the
+    // default 5 s ran out when the whole suite ran in parallel. A longer limit, same checks.
+  }, 30_000)
 
   it('leaves the frames between the flashes exactly as they are', () => {
     const hold = new SceneHold(W, H)
