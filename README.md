@@ -22,18 +22,19 @@ npm run build:win  # packaged installer in dist/
 
 ### Using it
 
-CalmFrame runs in the tray and opens its dashboard at the top right of the screen. The dashboard stays above everything else, and screen recorders can't see it, so film it with a phone.
+CalmFrame runs in the tray and shows a small panel at the top right of the screen. The panel stays above everything else, and screen recorders can't see it, so film it with a phone. Drag it by its top bar.
 
-- **Status.** "Protected" means frames are flowing and the detector is running. "Smoothing" means flashing was found and you are seeing a smoothed copy. "Protection off" says why it is off. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck on "Protected".
-- **Graph.** Flashes per second over the most affected part of the screen, against the WCAG limit of 3.
-- **Raw input (unprotected)** is a 240×135 view of what the detector sees, kept small enough that it can't become a hazardous flashing area itself. **Protected preview** shows what you see while CalmFrame is smoothing.
-- **Flash events.** One line per event, such as `0:42, 8 Hz, 2.1 s, smoothed`, and a count of the events smoothed since start.
-- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more than 3 flashes in a second). Each position shows how many flashes of a 10 Hz strobe the spec predicts get through first.
-- **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
-- **Flash limit (for testing)** is 3 flashes a second, the WCAG limit, and can be raised as far as 10 to see how content behaves at a looser limit. Above 3, CalmFrame lets through flashing that the WCAG rule counts as a hazard, and the dashboard says so. It goes back to 3 every time CalmFrame starts.
-- **Keep motion sharp (experimental)** (off by default) changes how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. It is for testing: a thin rim can still flicker where flashing content meets still content.
-- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the dashboard's switch and the tray menu. Protection is always on when CalmFrame starts.
-- Settings are saved in `%APPDATA%\calmframe\settings.json`. Closing the dashboard keeps CalmFrame in the tray. Quit from the tray menu.
+- **Ctrl+Alt+Shift+D** hides the panel completely and shows it again. Nothing else hides it.
+- **Protection switch,** with a small mark beside the name: a tick while CalmFrame watches the screen, a wave while it is smoothing flashing, a slashed ring when protection is off.
+- **Flashes per second** over the most affected part of the screen, as a graph against the limit line and as a number.
+- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more flashes in a second than the limit). Hover over the slider for how many flashes of a 10 Hz strobe the spec predicts get through first.
+- **Flash limit** is 3 flashes a second, the WCAG limit, and can be raised as far as 10 to see how content behaves at a looser limit. Above 3, CalmFrame lets through flashing that the WCAG rule counts as a hazard. It goes back to 3 every time CalmFrame starts.
+- **A notice line** appears under the name only when something is wrong: "Not protecting" and the reason, or Keep motion sharp not being available on this computer. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck looking protected.
+- **In the tray menu:**
+  - **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
+  - **Keep motion sharp (experimental)** (on by default) is how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. A thin rim can still flicker where flashing content meets still content. Untick it to blend recent frames instead (the smoothing filter).
+- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the panel's switch and the tray menu. Protection is always on when CalmFrame starts.
+- Settings are saved in `%APPDATA%\calmframe\settings.json`. Quit from the tray menu.
 
 ## How it works
 

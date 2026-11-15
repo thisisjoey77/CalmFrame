@@ -12,7 +12,7 @@
  * The options are the app's settings, with the app's defaults:
  *   --sensitivity 2|3|4|strict     the sensitivity slider (3)
  *   --ignore-movement on|off       "Ignore movement" (on)
- *   --keep-motion-sharp on|off     "Keep motion sharp" (off)
+ *   --keep-motion-sharp on|off     "Keep motion sharp" (on)
  *   --flash-limit 3..10            the flash limit, per second (3, the WCAG limit)
  * and one the app does not have yet:
  *   --game-mode on|off|hold        experimental (off), with the overlay always up. It

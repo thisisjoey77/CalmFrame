@@ -108,8 +108,12 @@ describe('offline render: the pipeline', () => {
   })
 
   it('follows the flash limit: a 6 Hz strobe is smoothed at 3 and let through at 7', () => {
-    const atThree = run(strobe(5), 240, {}).renderer.summary()
-    const atSeven = run(strobe(5), 240, { flashLimit: 7 }).renderer.summary()
+    // The calming method doesn't matter here, and the smoothing filter is the quicker of
+    // the two on the CPU: with the brightness correction (the default since Sat Nov 14)
+    // these two runs went past the 5 s test limit.
+    const smooth = { mitigation: 'smooth' } as const
+    const atThree = run(strobe(5), 240, smooth).renderer.summary()
+    const atSeven = run(strobe(5), 240, { ...smooth, flashLimit: 7 }).renderer.summary()
     expect(atThree.overlayS).toBeGreaterThan(0)
     expect(atSeven.overlayS).toBe(0)
     expect(atSeven.firstOverlayFrame).toBeNull()
@@ -254,7 +258,7 @@ describe('offline render: layouts and words', () => {
           ...DEFAULT_SETTINGS,
           sensitivity: { trigger: 'strict' },
           concurrency: 'off',
-          mitigation: 'correct'
+          mitigation: 'smooth'
         },
         2
       ),
@@ -267,9 +271,9 @@ describe('offline render: layouts and words', () => {
     expect(lines).toContain('GAME MODE: HOLD THE USUAL LOOK')
     expect(lines).toContain('SENSITIVITY: STANDARD (3 CHANGES)')
     expect(lines).toContain('IGNORE MOVEMENT: ON')
-    expect(lines).toContain('KEEP MOTION SHARP: OFF')
-    expect(lines).toContain('SENSITIVITY: STRICT')
     expect(lines).toContain('KEEP MOTION SHARP: ON')
+    expect(lines).toContain('SENSITIVITY: STRICT')
+    expect(lines).toContain('KEEP MOTION SHARP: OFF')
     expect(lines).toContain('OVERLAY DELAY: 2 FRAMES')
     expect(lines).toContain('LIMIT: 3 (WCAG)')
     expect(lines).toContain('LIMIT: 7 (TESTING, WCAG IS 3)')

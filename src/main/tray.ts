@@ -1,12 +1,20 @@
 /**
  * The tray icon and its menu (docs/SPEC.md, Phase 5). The icon and tooltip show the status
  * derived from the heartbeat ("flips the tray icon and dashboard to Protection off",
- * "Safety mechanisms"); the menu holds the on/off switch, the dashboard and Quit.
+ * "Safety mechanisms"); the menu holds the on/off switch, "Ignore movement" and "Keep
+ * motion sharp" (moved here from the dashboard in its redesign, Sat Nov 14, so the fallback
+ * to the detector as first specified stays one click away), the dashboard and Quit.
  */
 
 import { Menu, Tray, nativeImage, type NativeImage } from 'electron'
 import { TRAY_ICON_BASE_SIZE, TRAY_ICON_SCALES } from '../shared/config'
-import { STATUS_LABEL, type ProtectionStatus, type StatusView } from '../shared/status'
+import type { Settings } from '../shared/settings'
+import {
+  DASHBOARD_TOGGLE_LABEL,
+  STATUS_LABEL,
+  type ProtectionStatus,
+  type StatusView
+} from '../shared/status'
 import { drawStatusIcon, encodePng } from './trayIcon'
 
 /** Windows cuts tray tooltips at 127 characters, and long menu items are hard to read. */
@@ -15,6 +23,8 @@ const MENU_DETAIL_MAX = 70
 
 export interface TrayActions {
   setProtection(enabled: boolean): void
+  setIgnoreMovement(on: boolean): void
+  setKeepMotionSharp(on: boolean): void
   showDashboard(): void
   quit(): void
 }
@@ -39,7 +49,15 @@ const clip = (text: string, max: number): string =>
 export class CalmTray {
   private readonly tray: Tray
   private readonly icons: Record<ProtectionStatus, NativeImage>
-  private view: StatusView = { status: 'off', detail: 'Starting up', switchOn: false }
+  private view: StatusView = {
+    status: 'off',
+    detail: 'Starting up',
+    switchOn: false,
+    byUser: false
+  }
+  /** The two settings the menu shows, as main last sent them. */
+  private ignoreMovement = true
+  private keepMotionSharp = false
 
   constructor(private readonly actions: TrayActions) {
     this.icons = {
@@ -59,6 +77,18 @@ export class CalmTray {
       return
     }
     this.view = view
+    this.render()
+  }
+
+  /** Show the settings now in force. Rebuilds the menu only when one of its two changed. */
+  setSettings(settings: Settings): void {
+    const ignoreMovement = settings.concurrency === 'one-way'
+    const keepMotionSharp = settings.mitigation === 'correct'
+    if (ignoreMovement === this.ignoreMovement && keepMotionSharp === this.keepMotionSharp) {
+      return
+    }
+    this.ignoreMovement = ignoreMovement
+    this.keepMotionSharp = keepMotionSharp
     this.render()
   }
 
@@ -88,7 +118,24 @@ export class CalmTray {
           checked: switchOn,
           click: (item) => this.actions.setProtection(item.checked)
         },
-        { label: 'Show dashboard', click: () => this.actions.showDashboard() },
+        { type: 'separator' },
+        {
+          label: 'Ignore movement (recommended)',
+          type: 'checkbox',
+          checked: this.ignoreMovement,
+          click: (item) => this.actions.setIgnoreMovement(item.checked)
+        },
+        {
+          label: 'Keep motion sharp (experimental)',
+          type: 'checkbox',
+          checked: this.keepMotionSharp,
+          click: (item) => this.actions.setKeepMotionSharp(item.checked)
+        },
+        { type: 'separator' },
+        {
+          label: `Show dashboard (${DASHBOARD_TOGGLE_LABEL} hides it)`,
+          click: () => this.actions.showDashboard()
+        },
         { type: 'separator' },
         { label: 'Quit CalmFrame', click: () => this.actions.quit() }
       ])

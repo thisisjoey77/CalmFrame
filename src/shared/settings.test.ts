@@ -21,17 +21,17 @@ describe('settings (Phase 5)', () => {
     expect(DEFAULT_SETTINGS.dashboardBounds).toBeNull()
   })
 
-  it('defaults to the smoothing filter; "Keep motion sharp" is an opt-in (trail #10)', () => {
-    expect(DEFAULT_SETTINGS.mitigation).toBe('smooth')
-    expect(parseSettings({ mitigation: 'correct' }).mitigation).toBe('correct')
-    expect(parseSettings({ mitigation: 'sharpest' }).mitigation).toBe('smooth')
+  it('defaults to "Keep motion sharp" (asked for Sat Nov 14); smoothing is the other choice', () => {
+    expect(DEFAULT_SETTINGS.mitigation).toBe('correct')
+    expect(parseSettings({ mitigation: 'smooth' }).mitigation).toBe('smooth')
+    expect(parseSettings({ mitigation: 'sharpest' }).mitigation).toBe('correct')
     // A settings file saved before the option existed.
-    expect(parseSettings({ concurrency: 'off' }).mitigation).toBe('smooth')
-    const on = applySettingsPatch(DEFAULT_SETTINGS, { mitigation: 'correct' })
-    expect(on).toEqual({ ...DEFAULT_SETTINGS, mitigation: 'correct' })
-    expect(applySettingsPatch(on, { mitigation: true })).toEqual(on)
+    expect(parseSettings({ concurrency: 'off' }).mitigation).toBe('correct')
+    const off = applySettingsPatch(DEFAULT_SETTINGS, { mitigation: 'smooth' })
+    expect(off).toEqual({ ...DEFAULT_SETTINGS, mitigation: 'smooth' })
+    expect(applySettingsPatch(off, { mitigation: true })).toEqual(off)
     // It changes how a hazard is drawn, not what the detector looks for.
-    expect(detectorOptionsFor(on)).toEqual(detectorOptionsFor(DEFAULT_SETTINGS))
+    expect(detectorOptionsFor(off)).toEqual(detectorOptionsFor(DEFAULT_SETTINGS))
   })
 
   it('has slider positions N = 2, 3, 4, then strict, and no pre-arm position', () => {

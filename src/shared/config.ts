@@ -200,9 +200,6 @@ export const GRAPH_LIMIT_FLASHES_PER_SEC = DEFAULT_FLASH_LIMIT
 /** Blend toward grey applied to the output during a red hazard. "Red flashes". */
 export const RED_DESATURATION = 0.5
 
-/** Warn in the dashboard when capture falls below this rate. "Known behaviour at the edges". */
-export const LOW_FPS_WARNING = 45
-
 /** Send stats and the grid thumbnail to the dashboard every N frames. "The per-frame loop". */
 export const STATS_EVERY_N_FRAMES = 3
 
@@ -304,27 +301,28 @@ export const THUMBNAIL_MAX_SCREEN_FRACTION = 1 / 8
  *  value within one 8-bit code of the exact formula. */
 export const THUMBNAIL_LUT_SIZE = 4096
 
-/** Flash events (the dashboard's log and counter): hazards closer together than this are
+/** Flash events (main's log; the dashboard showed them until its redesign): hazards closer together than this are
  *  one event. It is how long the overlay stays up after the last hazard frame (the hold
  *  plus the fade), so with protection on, one event is one smoothing episode. */
 export const FLASH_EVENT_MERGE_MS = HOLD_MS + FADE_MS
 /** Per-frame frequency estimates kept for an event. Its frequency is their median, because
  *  the estimate is inflated at the edges of a burst (Phase 3 results). */
 export const FLASH_EVENT_FREQUENCY_SAMPLES = 600
-/** Event log lines kept in the dashboard. */
-export const EVENT_LOG_MAX = 200
 
-/** The low capture-rate warning stays up this long after the last reading under
- *  LOW_FPS_WARNING, so a rate hovering around the line does not make it come and go. */
-export const LOW_FPS_WARNING_HOLD_MS = 5000
-
-/** Dashboard window size in DIP, its smallest size, and its distance from the edges of the
- *  work area when placed for the first time (top right). */
-export const DASHBOARD_WIDTH = 460
-export const DASHBOARD_HEIGHT = 820
-export const DASHBOARD_MIN_WIDTH = 380
-export const DASHBOARD_MIN_HEIGHT = 420
+/** The dashboard is a small frameless panel (redesigned Sat Nov 14, afternoon). Its width in
+ *  DIP is fixed. Its height follows its content: the page measures itself and main fits the
+ *  window to it, so this height is only the first guess before the page has laid out. */
+export const DASHBOARD_WIDTH = 360
+export const DASHBOARD_HEIGHT = 380
+/** Saved bounds smaller than this are not a real panel (a damaged settings file), and a
+ *  height the page reports is never fitted below DASHBOARD_MIN_HEIGHT. */
+export const DASHBOARD_MIN_WIDTH = 200
+export const DASHBOARD_MIN_HEIGHT = 120
+/** Distance from the edges of the work area when placed for the first time (top right). */
 export const DASHBOARD_MARGIN = 16
+/** Global shortcut that shows and hides the dashboard completely. Not Ctrl+Shift+P, which
+ *  a global shortcut would take from VS Code (its command palette) and Firefox. */
+export const DASHBOARD_TOGGLE_ACCELERATOR = 'Control+Alt+Shift+D'
 /** Dashboard graph: time span shown, and the smallest top of its y axis. */
 export const DASHBOARD_GRAPH_WINDOW_MS = 30000
 export const DASHBOARD_GRAPH_MIN_Y_MAX = 12
@@ -427,13 +425,15 @@ export const VALIDATE_SECOND_MS = 1000
 /**
  * How the overlay calms a hazard ("Mitigation math").
  * - 'smooth': each pixel is averaged with its own past (Passes B and C). The method as
- *   first specified, and the default.
+ *   first specified. The tray's "Keep motion sharp" unticked, and the fallback whenever
+ *   the correction pass fails its startup check.
  * - 'correct': the current frame is shown, with each region's brightness scaled to that
  *   region's running average ("Stretch: correct brightness per region"). Motion stays
- *   sharp. Experimental, behind the dashboard's "Keep motion sharp" tick box.
+ *   sharp. Experimental, the tray menu's "Keep motion sharp", and the default since the
+ *   user asked for it (Sat Nov 14, afternoon).
  */
 export type MitigationMethod = 'smooth' | 'correct'
-export const DEFAULT_MITIGATION_METHOD: MitigationMethod = 'smooth'
+export const DEFAULT_MITIGATION_METHOD: MitigationMethod = 'correct'
 /** A region whose mean is within this of black has nothing to scale down, and one within
  *  this of white has nothing to scale up: its pixels take the target value itself. */
 export const CORRECTION_EPSILON = 1e-4
