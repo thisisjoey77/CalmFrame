@@ -17,7 +17,6 @@ import {
   DASHBOARD_HEIGHT,
   DASHBOARD_MARGIN,
   DASHBOARD_MIN_HEIGHT,
-  DASHBOARD_TOGGLE_ACCELERATOR,
   DASHBOARD_WIDTH,
   DEBUG_CAPTURE_SIZES,
   DEBUG_FREEZE_ACCELERATOR,
@@ -52,13 +51,7 @@ import {
   type StatusBeat
 } from '../shared/messages'
 import type { Settings } from '../shared/settings'
-import {
-  DASHBOARD_TOGGLE_LABEL,
-  KILL_SWITCH_LABEL,
-  STATUS_LABEL,
-  deriveStatus,
-  type StatusView
-} from '../shared/status'
+import { KILL_SWITCH_LABEL, STATUS_LABEL, deriveStatus, type StatusView } from '../shared/status'
 import { NativeCapture } from './nativeCapture'
 import { SettingsStore } from './settingsStore'
 import { CalmTray } from './tray'
@@ -257,7 +250,8 @@ function createOverlayWindow(): BrowserWindow {
 /** Where the dashboard goes: where it was left, if that is still on a screen, else the top
  *  right of the primary display's work area. Only the saved position is reused: the width
  *  is fixed and the height follows the page (IPC.fitDashboard), so a size saved by the
- *  larger dashboard before its redesign doesn't come back. */
+ *  larger dashboard before its redesign doesn't come back. The size is the page's (the
+ *  window is made with useContentSize); the title bar comes on top. */
 function dashboardBounds(): Rectangle {
   const saved = store?.settings.dashboardBounds ?? null
   const area = screen.getPrimaryDisplay().workArea
@@ -274,20 +268,27 @@ function dashboardBounds(): Rectangle {
 }
 
 /**
- * Fit the dashboard to the height its page needs (IPC.fitDashboard), kept on the display
- * it is on: no taller than the work area, and moved up if the new height would run off
- * the bottom.
+ * Fit the dashboard's page area to the height its page needs (IPC.fitDashboard), kept on
+ * the display it is on: no taller than the work area with the title bar, and moved up if
+ * the new height would run off the bottom.
  */
 function fitDashboard(heightDip: number): void {
-  if (!alive(dashboardWin)) return
-  const b = dashboardWin.getBounds()
-  const area = screen.getDisplayMatching(b).workArea
+  if (!alive(dashboardWin) || dashboardWin.isMinimized()) return
+  const win = dashboardWin
+  const outer = win.getBounds()
+  const area = screen.getDisplayMatching(outer).workArea
+  const [contentWidth, contentHeight] = win.getContentSize()
+  const titleBar = outer.height - contentHeight
   const height = Math.round(
-    Math.min(Math.max(heightDip, DASHBOARD_MIN_HEIGHT), area.height - 2 * DASHBOARD_MARGIN)
+    Math.min(
+      Math.max(heightDip, DASHBOARD_MIN_HEIGHT),
+      area.height - 2 * DASHBOARD_MARGIN - titleBar
+    )
   )
-  const y = Math.max(area.y, Math.min(b.y, area.y + area.height - height))
-  if (height === b.height && y === b.y) return
-  dashboardWin.setBounds({ x: b.x, y, width: b.width, height })
+  if (height !== contentHeight) win.setContentSize(contentWidth, height)
+  const b = win.getBounds()
+  const y = Math.max(area.y, Math.min(b.y, area.y + area.height - b.height))
+  if (y !== b.y) win.setPosition(b.x, y)
 }
 
 /** Enough of the window's top edge is inside some display's work area to grab it. */
@@ -301,22 +302,20 @@ function titleBarOnScreen(b: Rectangle): boolean {
 }
 
 /**
- * The dashboard (Phase 5; a small frameless panel since its redesign, Sat Nov 14). Above
- * the overlay and excluded from capture, so it stays sharp and live while the rest of the
- * screen is smoothed, and the detector never sees it. It is shown at launch, and only
- * DASHBOARD_TOGGLE_ACCELERATOR hides it: it has no close button, and closing it from the
- * keyboard does nothing. The tray menu shows it again too; Quit is in the tray menu.
+ * The dashboard (Phase 5; a small panel since its redesign, Sat Nov 14). Above the overlay
+ * and excluded from capture, so it stays sharp and live while the rest of the screen is
+ * smoothed, and the detector never sees it. A normal window with a title bar (the user's
+ * choice, Sat Nov 14 evening): minimize puts it in the taskbar, and close hides it to the
+ * tray, which shows it again. Quit is in the tray menu.
  */
 function createDashboardWindow(): BrowserWindow {
   const win = new BrowserWindow({
     ...dashboardBounds(),
+    useContentSize: true,
     show: false,
-    frame: false,
     resizable: false,
-    minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
     title: 'CalmFrame',
     backgroundColor: '#14181d',
     alwaysOnTop: true,
@@ -325,6 +324,7 @@ function createDashboardWindow(): BrowserWindow {
       sandbox: false
     }
   })
+  win.removeMenu()
   win.setContentProtection(true)
 
   win.once('ready-to-show', () => {
@@ -337,11 +337,12 @@ function createDashboardWindow(): BrowserWindow {
   })
   // Applied again whenever it is shown, as for the overlay.
   win.on('show', () => win.setContentProtection(true))
-  // Only the shortcut hides it (the user's choice), so Alt+F4 does nothing.
+  // Closing it hides it to the tray: protection keeps running. Quit is in the tray menu.
   win.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
-    console.log(`[dashboard] close ignored: ${DASHBOARD_TOGGLE_LABEL} hides it`)
+    win.hide()
+    console.log('[dashboard] hidden to the tray')
   })
   win.on('closed', () => {
     dashboardWin = null
@@ -349,7 +350,10 @@ function createDashboardWindow(): BrowserWindow {
   // 'move' rather than 'moved', which Windows only sends at the end of a drag with the
   // mouse, not for snapping with Win+arrow keys. The store writes the file once, a moment
   // after the last change.
-  win.on('move', () => store?.update({ dashboardBounds: win.getBounds() }))
+  // A minimized window is parked off screen, which is not where it was left.
+  win.on('move', () => {
+    if (!win.isMinimized()) store?.update({ dashboardBounds: win.getBounds() })
+  })
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[dashboard] renderer gone (${details.reason}), reloading`)
     if (!win.isDestroyed()) loadPage(win, 'dashboard')
@@ -366,37 +370,22 @@ function createDashboardWindow(): BrowserWindow {
 /** Put the dashboard above the overlay: always on top at the overlay's level, set after
  *  the overlay's, which puts it higher in that band. */
 function raiseDashboard(): void {
-  if (!alive(dashboardWin) || !dashboardWin.isVisible()) return
+  if (!alive(dashboardWin) || !dashboardWin.isVisible() || dashboardWin.isMinimized()) return
   dashboardWin.setAlwaysOnTop(true, 'screen-saver')
   dashboardWin.moveTop()
 }
 
-/** Show the dashboard and focus it: from the tray, or a second launch of the app. */
+/** Show the dashboard and focus it, minimized or hidden: from the tray, or a second
+ *  launch of the app. */
 function showDashboard(): void {
   if (!alive(dashboardWin)) {
     dashboardWin = createDashboardWindow()
     return
   }
+  if (dashboardWin.isMinimized()) dashboardWin.restore()
   dashboardWin.show()
   dashboardWin.focus()
   raiseDashboard()
-}
-
-/** DASHBOARD_TOGGLE_ACCELERATOR: hide the dashboard completely, or show it again without
- *  taking the focus from the game or video underneath. */
-function toggleDashboard(): void {
-  if (!alive(dashboardWin)) {
-    dashboardWin = createDashboardWindow()
-    return
-  }
-  if (dashboardWin.isVisible()) {
-    dashboardWin.hide()
-    console.log(`[dashboard] hidden with ${DASHBOARD_TOGGLE_LABEL}`)
-    return
-  }
-  dashboardWin.showInactive()
-  raiseDashboard()
-  console.log(`[dashboard] shown with ${DASHBOARD_TOGGLE_LABEL}`)
 }
 
 /** The Phase 0 to 4 debug window, only with CALMFRAME_DEBUG_WINDOW=1 or the FPS sweep. */
@@ -838,10 +827,6 @@ function start(): void {
   })
   console.log(`[kill switch] ${KILL_SWITCH_ACCELERATOR} registered: ${registered}`)
 
-  // The dashboard's show/hide shortcut (its redesign, Sat Nov 14).
-  const toggleRegistered = globalShortcut.register(DASHBOARD_TOGGLE_ACCELERATOR, toggleDashboard)
-  console.log(`[dashboard] ${DASHBOARD_TOGGLE_ACCELERATOR} registered: ${toggleRegistered}`)
-
   // Hidden debug command, dev builds only: freeze the overlay renderer to test the watchdog.
   if (is.dev) {
     const freezeRegistered = globalShortcut.register(DEBUG_FREEZE_ACCELERATOR, () => {
@@ -877,8 +862,8 @@ app.on('will-quit', () => {
   tray = null
 })
 
-// Windows is the only target, so quit when the last window closes. The dashboard ignores
-// being closed, so this is reached when quitting from the tray.
+// Windows is the only target, so quit when the last window closes. Closing the dashboard
+// only hides it, so this is reached when quitting from the tray.
 app.on('window-all-closed', () => {
   app.quit()
 })

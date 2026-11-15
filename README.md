@@ -22,9 +22,9 @@ npm run build:win  # packaged installer in dist/
 
 ### Using it
 
-CalmFrame runs in the tray and shows a small panel at the top right of the screen. The panel stays above everything else, and screen recorders can't see it, so film it with a phone. Drag it by its top bar.
+CalmFrame runs in the tray and shows a small window at the top right of the screen. The window stays above everything else, and screen recorders can't see it, so film it with a phone.
 
-- **Ctrl+Alt+Shift+D** hides the panel completely and shows it again. Nothing else hides it.
+- **Minimize** puts the window in the taskbar. **Close** hides it to the tray, and protection keeps running: click the tray icon (in the ^ overflow by the clock, unless you pin it) to bring the window back.
 - **Protection switch,** with a small mark beside the name: a tick while CalmFrame watches the screen, a wave while it is smoothing flashing, a slashed ring when protection is off.
 - **Flashes per second** over the most affected part of the screen, as a graph against the limit line and as a number.
 - **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more flashes in a second than the limit). Hover over the slider for how many flashes of a 10 Hz strobe the spec predicts get through first.
@@ -34,7 +34,7 @@ CalmFrame runs in the tray and shows a small panel at the top right of the scree
   - **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
   - **Keep motion sharp (experimental)** (on by default) is how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. A thin rim can still flicker where flashing content meets still content. Untick it to blend recent frames instead (the smoothing filter).
 - **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the panel's switch and the tray menu. Protection is always on when CalmFrame starts.
-- Settings are saved in `%APPDATA%\calmframe\settings.json`. Quit from the tray menu.
+- Settings are saved in `%APPDATA%\calmframe\settings.json`. To quit, right-click the tray icon and choose **Quit CalmFrame**.
 
 ## How it works
 

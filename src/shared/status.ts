@@ -10,12 +10,7 @@
  * watchdog hides the overlay.
  */
 
-import {
-  DASHBOARD_TOGGLE_ACCELERATOR,
-  FRAME_STALE_MS,
-  KILL_SWITCH_ACCELERATOR,
-  WATCHDOG_MS
-} from './config'
+import { FRAME_STALE_MS, KILL_SWITCH_ACCELERATOR, WATCHDOG_MS } from './config'
 import type { StatusBeat } from './messages'
 
 export type ProtectionStatus = 'protected' | 'smoothing' | 'off'
@@ -38,8 +33,6 @@ const SMOOTHING_STATES: ReadonlySet<string> = new Set(['active', 'release', 'arm
 
 /** The kill switch as a person types it: Ctrl+Alt+Shift+C. */
 export const KILL_SWITCH_LABEL = KILL_SWITCH_ACCELERATOR.replace('Control', 'Ctrl')
-/** The dashboard's show/hide shortcut as a person types it: Ctrl+Alt+Shift+D. */
-export const DASHBOARD_TOGGLE_LABEL = DASHBOARD_TOGGLE_ACCELERATOR.replace('Control', 'Ctrl')
 
 const off = (detail: string, switchOn: boolean, byUser = false): StatusView => ({
   status: 'off',

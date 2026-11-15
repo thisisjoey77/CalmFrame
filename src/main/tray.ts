@@ -9,12 +9,7 @@
 import { Menu, Tray, nativeImage, type NativeImage } from 'electron'
 import { TRAY_ICON_BASE_SIZE, TRAY_ICON_SCALES } from '../shared/config'
 import type { Settings } from '../shared/settings'
-import {
-  DASHBOARD_TOGGLE_LABEL,
-  STATUS_LABEL,
-  type ProtectionStatus,
-  type StatusView
-} from '../shared/status'
+import { STATUS_LABEL, type ProtectionStatus, type StatusView } from '../shared/status'
 import { drawStatusIcon, encodePng } from './trayIcon'
 
 /** Windows cuts tray tooltips at 127 characters, and long menu items are hard to read. */
@@ -132,10 +127,7 @@ export class CalmTray {
           click: (item) => this.actions.setKeepMotionSharp(item.checked)
         },
         { type: 'separator' },
-        {
-          label: `Show dashboard (${DASHBOARD_TOGGLE_LABEL} hides it)`,
-          click: () => this.actions.showDashboard()
-        },
+        { label: 'Show dashboard', click: () => this.actions.showDashboard() },
         { type: 'separator' },
         { label: 'Quit CalmFrame', click: () => this.actions.quit() }
       ])

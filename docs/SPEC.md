@@ -536,7 +536,7 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 | --- | --- | --- |
 | Main process | Node | Creates windows and tray, grants screen capture to the overlay renderer, stores settings, relays messages, owns the kill switch and watchdog |
 | Overlay window | Renderer | Captures the screen, runs the GPU passes and the detector, draws the smoothed copy. Transparent, click-through, always on top, excluded from capture |
-| Dashboard window | Renderer | A small frameless panel since its redesign (Sat Nov 14, afternoon): the protection switch, the flashes-per-second graph and its latest value, the sensitivity and flash-limit sliders, and a notice line only when something is wrong. Ctrl+Alt+Shift+D shows and hides it. Receives stats about 20 times a second. Always on top, above the overlay, and excluded from capture, so it stays sharp and live during a hazard (decided Sat Nov 14) |
+| Dashboard window | Renderer | A small panel since its redesign (Sat Nov 14, afternoon), in a normal window with a title bar: the protection switch, the flashes-per-second graph and its latest value, the sensitivity and flash-limit sliders, and a notice line only when something is wrong. Minimize puts it in the taskbar; close hides it to the tray. Receives stats about 20 times a second. Always on top, above the overlay, and excluded from capture, so it stays sharp and live during a hazard (decided Sat Nov 14) |
 | Detector core | Plain TypeScript, no Electron or DOM imports | Detection, filter-parameter math, overlay state machine. Shared by the app and the validator |
 | Strobe test page | Static page in a normal browser | Calibration source and safe demo clip |
 | Validator CLI | Node script | Decodes a video file, runs the detector core, compares with IRIS |
@@ -878,12 +878,12 @@ The user asked for a clean dashboard for the table demo, "an overlay almost" tha
 - **A notice line, only when something is wrong** (`src/shared/panelNotice.ts`, with tests). In order: "Not protecting" and the reason, for every way to be off except the user switching protection off; then Keep motion sharp unavailable. There is no fps warning: the user asked for none on the demo panel. Main's log still has the capture rate. Without the status word, a stalled capture would leave the switch on and the panel looking protected. To tell the two kinds of off apart, main's status relay carries `offByUser`, and `deriveStatus` returns `byUser`, which is only ever true while the status is off.
 - **The flash limit is a normal control, with no warning when raised** (the user's decision, reversing Step 7's "says so"). The label reads "(WCAG)" only at 3. It still goes back to 3 at every launch.
 - **Ignore movement and Keep motion sharp moved to the tray menu,** as checkboxes, so the fallback to the detector as first specified stays one click away.
-- **The window.**
-  - Frameless, not resizable and off the taskbar.
-  - 360 DIP wide on request. Windows makes a frameless window that can't be resized a little wider: 368 measured at 150% scaling.
-  - As tall as its content: the page reports its height and main fits the window to it (382 DIP).
-  - Dragged by its header (`app-region: drag`). Only the saved position is reused, not the old size.
-- **Shown and hidden only with Ctrl+Alt+Shift+D.** It is a global shortcut that hides the panel completely, or shows it again without taking the focus from the game or video. It is not Ctrl+Shift+P, because a global shortcut would take that from VS Code's command palette and from Firefox. The panel is shown at launch, Alt+F4 does nothing, and the tray's "Show dashboard" also brings it back.
+- **The window.** At first it was a frameless panel that only a global shortcut, Ctrl+Alt+Shift+D, could hide. The same evening the user asked for a normal window instead, so they wouldn't need the shortcut. The shortcut is gone.
+  - A title bar with minimize and close; no menu bar, not resizable, no maximize.
+  - Minimize puts it in the taskbar. Close hides it to the tray, and protection keeps running; the tray icon or its "Show dashboard" brings it back. Quit is in the tray menu.
+  - Still always on top at the overlay's level. It has to be: while the overlay draws its calm copy, a normal window under it would vanish behind the copy, because the copy can't contain the dashboard (it is excluded from capture).
+  - The page area is 360 DIP wide on request (362 measured at 150% scaling) and as tall as its content: the page reports its height and main fits the page area to it (382 DIP), under the title bar.
+  - Only the saved position is reused, not the old size, and never the off-screen spot of a minimized window.
 - **The thumbnails are still made by the overlay,** so they can come back without touching the frame loop. Main drops them.
 - **Keep motion sharp is now the default** (`DEFAULT_MITIGATION_METHOD = 'correct'`). The user asked for it once its tick box had moved out of sight into the tray menu. A settings file that already says `smooth` keeps smoothing. The offline render takes the app's defaults, so `--keep-motion-sharp` is on unless set off. Its known weaknesses are unchanged and still pinned by tests: a flickering rim at a hard edge, and pale halos along strong edges on real footage.
 - **Checked on the demo laptop.**

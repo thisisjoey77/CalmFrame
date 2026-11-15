@@ -320,9 +320,6 @@ export const DASHBOARD_MIN_WIDTH = 200
 export const DASHBOARD_MIN_HEIGHT = 120
 /** Distance from the edges of the work area when placed for the first time (top right). */
 export const DASHBOARD_MARGIN = 16
-/** Global shortcut that shows and hides the dashboard completely. Not Ctrl+Shift+P, which
- *  a global shortcut would take from VS Code (its command palette) and Firefox. */
-export const DASHBOARD_TOGGLE_ACCELERATOR = 'Control+Alt+Shift+D'
 /** Dashboard graph: time span shown, and the smallest top of its y axis. */
 export const DASHBOARD_GRAPH_WINDOW_MS = 30000
 export const DASHBOARD_GRAPH_MIN_Y_MAX = 12

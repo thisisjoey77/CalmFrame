@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME_STALE_MS, WATCHDOG_MS } from './config'
 import type { StatusBeat } from './messages'
-import { DASHBOARD_TOGGLE_LABEL, KILL_SWITCH_LABEL, deriveStatus } from './status'
+import { KILL_SWITCH_LABEL, deriveStatus } from './status'
 
 /** A healthy heartbeat: running, overlay shown, frames arriving. */
 const healthy: StatusBeat = {
@@ -120,8 +120,7 @@ describe('protection status (Phase 5): derived from the heartbeat, never wrong',
     }
   })
 
-  it('puts the kill switch and the dashboard shortcut the way a person types them', () => {
+  it('puts the kill switch the way a person types it', () => {
     expect(KILL_SWITCH_LABEL).toBe('Ctrl+Alt+Shift+C')
-    expect(DASHBOARD_TOGGLE_LABEL).toBe('Ctrl+Alt+Shift+D')
   })
 })

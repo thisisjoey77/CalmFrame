@@ -8,7 +8,7 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
     <style>
-      /* A small frameless panel (redesigned Sat Nov 14, afternoon). Calm on purpose: dark,
+      /* A small panel (redesigned Sat Nov 14, afternoon; a normal window since evening). Calm on purpose: dark,
          muted, high-contrast text, no transitions or animation anywhere except the graph's
          scrolling. It sits above the overlay and is not smoothed, so nothing in it may
          blink. Status colours are close in brightness and none is a saturated red. */
@@ -61,19 +61,12 @@
         white-space: nowrap;
       }
 
-      /* Header: the drag handle of the frameless window. */
       header {
         display: flex;
         align-items: center;
         gap: 10px;
         padding: 10px 12px 10px 14px;
         border-bottom: 1px solid var(--border);
-        -webkit-app-region: drag;
-        app-region: drag;
-      }
-      header button {
-        -webkit-app-region: no-drag;
-        app-region: no-drag;
       }
       h1 {
         flex: 1;

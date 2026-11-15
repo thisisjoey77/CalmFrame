@@ -1,7 +1,8 @@
 // Dashboard (docs/SPEC.md, Phase 5; redesigned as a small panel on Sat Nov 14, afternoon):
 // the protection switch with a small status mark, the flashes-per-second graph with its
 // latest value, the sensitivity and flash-limit sliders, and one notice line that appears
-// only when something is wrong. No capture-rate warning: the user asked for none. Ctrl+Alt+Shift+D (registered by main) shows and hides it.
+// only when something is wrong. No capture-rate warning: the user asked for none. A
+// normal window since Sat Nov 14 evening: minimize it, or close it to the tray.
 // "Ignore movement" and "Keep motion sharp" moved to the tray menu.
 //
 // It sits above the overlay and is excluded from capture, and nothing in it is smoothed,
@@ -26,13 +27,7 @@ import {
   type Sensitivity,
   type Settings
 } from '../shared/settings'
-import {
-  DASHBOARD_TOGGLE_LABEL,
-  KILL_SWITCH_LABEL,
-  STATUS_LABEL,
-  deriveStatus,
-  type StatusView
-} from '../shared/status'
+import { KILL_SWITCH_LABEL, STATUS_LABEL, deriveStatus, type StatusView } from '../shared/status'
 import { ScrollingGraph } from './graph'
 
 const api = window.api
@@ -60,7 +55,7 @@ let sharpUnavailable = false
  *  name the old method, so they are not held against the new setting. */
 let sharpChangedAt = -Infinity
 
-protectionSwitch.title = `${KILL_SWITCH_LABEL} switches protection off and on from anywhere. ${DASHBOARD_TOGGLE_LABEL} hides this panel.`
+protectionSwitch.title = `${KILL_SWITCH_LABEL} switches protection off and on from anywhere.`
 
 function setSwitch(on: boolean): void {
   protectionSwitch.setAttribute('aria-checked', String(on))
