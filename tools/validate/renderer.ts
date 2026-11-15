@@ -58,7 +58,7 @@ import {
   DEFAULT_SETTINGS,
   type Settings
 } from '../../src/shared/settings'
-import { blit, drawText, fillRect, newCanvas, type Canvas, type Rgb } from './draw'
+import { blit, drawText, fillRect, newCanvas, textWidth, type Canvas, type Rgb } from './draw'
 
 export interface Rect {
   x: number
@@ -216,8 +216,17 @@ const COLORS = {
   muted: [195, 202, 210] as Rgb,
   limit: [210, 153, 34] as Rgb,
   safe: [88, 166, 255] as Rgb,
-  hazard: [244, 112, 103] as Rgb
+  hazard: [244, 112, 103] as Rgb,
+  /** The calmed picture's line on the graph (--seen-line): the dashboard's green. */
+  seen: [63, 185, 80] as Rgb
 }
+
+/** Thickness of the calmed picture's line on the graph, in pixels. */
+const SEEN_LINE_WIDTH = 3
+/** The legend above the graph: its swatches' sizes and the gaps around them, in pixels. */
+const LEGEND_SWATCH = 20
+const LEGEND_SPACE = 8
+const LEGEND_GROUP_SPACE = 32
 
 /** Pixels per font dot. */
 const LABEL_SCALE = 4
@@ -251,8 +260,13 @@ interface Pending {
 class FlaggedSeconds {
   private readonly seconds = new Set<number>()
   constructor(private readonly detector: Detector | null = null) {}
-  step(grid: Float32Array, tMs: number): void {
-    if (this.detector?.step(grid, tMs).hazard) this.note(tMs)
+  /** @returns the detector's graph value (flashes per second over a hazardous area) for
+   *  this frame, or 0 without a detector */
+  step(grid: Float32Array, tMs: number): number {
+    if (!this.detector) return 0
+    const d = this.detector.step(grid, tMs)
+    if (d.hazard) this.note(tMs)
+    return d.graphValue
   }
   note(tMs: number): void {
     this.seconds.add(Math.floor(tMs / VALIDATE_SECOND_MS))
@@ -329,6 +343,8 @@ export class ClipRenderer {
 
   private readonly history: Float32Array
   private readonly historyHazard: Uint8Array
+  /** The calmed picture's flashes per second, for the graph's second line, or null. */
+  private readonly seenHistory: Float32Array | null
   private readonly shownText = new Map<string, string>()
 
   private index = 0
@@ -343,13 +359,17 @@ export class ClipRenderer {
    * @param delayFrames how many frames late the overlay's picture reaches the viewer
    * @param gameMode 'dim' or 'hold': calm with zoneDim.ts or sceneHold.ts and keep the
    *        overlay's picture up all the time, whatever the settings' mitigation method says
+   * @param seenLine add a second line to the graph: flashes per second in the calmed
+   *        picture, measured on its pixels by a detector with the same settings, so the
+   *        graph shows the effect next to the original's bars (--seen-line)
    */
   constructor(
     private readonly layout: Layout,
     private readonly settings: Settings = DEFAULT_SETTINGS,
     private readonly fps: number,
     private readonly delayFrames: number,
-    private readonly gameMode: GameMode = 'off'
+    private readonly gameMode: GameMode = 'off',
+    seenLine = false
   ) {
     if (!(fps > 0)) throw new Error(`The frame rate must be positive, got ${fps}`)
     if (!Number.isInteger(delayFrames) || delayFrames < 0) {
@@ -398,6 +418,7 @@ export class ClipRenderer {
     const samples = Math.max(2, Math.round((RENDER_GRAPH_WINDOW_MS * fps) / 1000))
     this.history = new Float32Array(samples)
     this.historyHazard = new Uint8Array(samples)
+    this.seenHistory = seenLine ? new Float32Array(samples) : null
     this.drawStaticText()
   }
 
@@ -473,9 +494,9 @@ export class ClipRenderer {
 
     averageToGrid(this.pane, w, h, this.seenGrid)
     this.seenStandard.step(this.seenGrid, tMs)
-    this.seenSettings.step(this.seenGrid, tMs)
+    const seenValue = this.seenSettings.step(this.seenGrid, tMs)
 
-    this.compose(rgba, n, d.graphValue, d.hazard, on)
+    this.compose(rgba, n, d.graphValue, d.hazard, on, seenValue)
     averageToGrid(this.canvas.data, this.canvas.width, this.canvas.height, this.wholeGrid)
     this.wholeStandard.step(this.wholeGrid, tMs)
     return this.canvas.data
@@ -579,7 +600,8 @@ export class ClipRenderer {
     n: number,
     graphValue: number,
     hazard: boolean,
-    on: boolean
+    on: boolean,
+    seenValue: number
   ): void {
     const { layout, canvas, w, h } = this
     blit(canvas, this.pane, w, h, layout.protectedPane.x, layout.protectedPane.y)
@@ -595,6 +617,7 @@ export class ClipRenderer {
     const slot = n % this.history.length
     this.history[slot] = graphValue
     this.historyHazard[slot] = hazard ? 1 : 0
+    if (this.seenHistory) this.seenHistory[slot] = seenValue
     const text = layout.text
     if (!text) return
     this.drawGraph(text.graph, n)
@@ -642,20 +665,27 @@ export class ClipRenderer {
   }
 
   /** Flashes per second over the last RENDER_GRAPH_WINDOW_MS, newest at the right, with the
-   *  limit line. Bars, in the dashboard's muted colours, so nothing in it can flash. */
+   *  limit line. Bars, in the dashboard's muted colours, so nothing in it can flash. With
+   *  --seen-line, the calmed picture's flashes per second as a green line over the bars. */
   private drawGraph(box: Rect, n: number): void {
     const canvas = this.canvas
     const limit = this.settings.flashLimit
+    const seen = this.seenHistory
     fillRect(canvas, box.x, box.y, box.w, box.h, COLORS.panel)
     const samples = this.history.length
     let top = Math.max(DASHBOARD_GRAPH_MIN_Y_MAX, limit + 1)
-    for (let i = 0; i < samples; i++) if (this.history[i] > top) top = this.history[i]
+    for (let i = 0; i < samples; i++) {
+      top = Math.max(top, this.history[i], seen ? seen[i] : 0)
+    }
     const filled = Math.min(n + 1, samples)
-    for (let x = 0; x < box.w; x++) {
-      // Column x shows the sample this far back from the newest.
+    // The sample column x shows: this far back from the newest, or -1 before the clip.
+    const slotAt = (x: number): number => {
       const back = Math.floor(((box.w - 1 - x) * samples) / box.w)
-      if (back >= filled) continue
-      const slot = (((n - back) % samples) + samples) % samples
+      return back >= filled ? -1 : (((n - back) % samples) + samples) % samples
+    }
+    for (let x = 0; x < box.w; x++) {
+      const slot = slotAt(x)
+      if (slot < 0) continue
       const value = this.history[slot]
       if (value <= 0) continue
       const bar = Math.max(1, Math.round((value / top) * (box.h - 2)))
@@ -670,6 +700,38 @@ export class ClipRenderer {
     }
     const limitY = box.y + box.h - 1 - Math.round((limit / top) * (box.h - 2))
     for (let x = 0; x < box.w; x += 12) fillRect(canvas, box.x + x, limitY, 7, 2, COLORS.limit)
+    if (!seen) return
+    // Drawn last, over the bars and the limit line, joined column to column.
+    let previous: number | null = null
+    for (let x = 0; x < box.w; x++) {
+      const slot = slotAt(x)
+      if (slot < 0) continue
+      const y =
+        box.y + box.h - SEEN_LINE_WIDTH - Math.round((seen[slot] / top) * (box.h - SEEN_LINE_WIDTH))
+      const from = previous ?? y
+      const high = Math.min(from, y)
+      fillRect(canvas, box.x + x, high, 1, Math.max(from, y) - high + SEEN_LINE_WIDTH, COLORS.seen)
+      previous = y
+    }
+  }
+
+  /** The key just above the graph when it has the calmed picture's line: the bars are the
+   *  original's flashes per second (blue, or red over the limit), the green line is what
+   *  CalmFrame's viewer sees. */
+  private drawLegend(box: Rect): void {
+    const canvas = this.canvas
+    const height = 7 * SMALL_SCALE
+    const y = box.y - height - LEGEND_SPACE
+    let x = box.x
+    fillRect(canvas, x, y, LEGEND_SWATCH / 2, height, COLORS.safe)
+    fillRect(canvas, x + LEGEND_SWATCH / 2, y, LEGEND_SWATCH / 2, height, COLORS.hazard)
+    x += LEGEND_SWATCH + LEGEND_SPACE
+    drawText(canvas, 'ORIGINAL', x, y, SMALL_SCALE, COLORS.muted)
+    x += textWidth('ORIGINAL', SMALL_SCALE) + LEGEND_GROUP_SPACE
+    const lineY = y + Math.round((height - SEEN_LINE_WIDTH) / 2)
+    fillRect(canvas, x, lineY, LEGEND_SWATCH, SEEN_LINE_WIDTH, COLORS.seen)
+    x += LEGEND_SWATCH + LEGEND_SPACE
+    drawText(canvas, 'WITH CALMFRAME', x, y, SMALL_SCALE, COLORS.muted)
   }
 
   private drawStaticText(): void {
@@ -694,6 +756,7 @@ export class ClipRenderer {
         COLORS.muted
       )
     }
+    if (this.seenHistory) this.drawLegend(text.graph)
     const details = text.details
     if (!details) return
     drawText(

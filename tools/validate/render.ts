@@ -26,6 +26,9 @@
  *   --info graph|full              what is written into the picture besides the two labels:
  *                                  the graph alone (default), or also the status, the
  *                                  settings used and a line saying it is an offline render
+ *   --seen-line on|off             a second, green line on the graph (off): flashes per
+ *                                  second in the calmed picture, measured on its pixels,
+ *                                  over the original's bars, with a key above the graph
  *   --delay-frames 0..6            frames the overlay's picture is late (1)
  *   --fps N                        (the source's, at most 60)
  *   --start S, --duration S        render part of the file, in seconds
@@ -71,6 +74,7 @@ export const USAGE = `usage: render <video> [--out file.mp4]
   [--sensitivity 2|3|4|strict] [--ignore-movement on|off] [--keep-motion-sharp on|off]
   [--game-mode on|off|hold]
   [--flash-limit ${FLASH_LIMIT_MIN}..${FLASH_LIMIT_MAX}] [--layout ${LAYOUT_NAMES.join('|')}] [--info ${INFO_LEVELS.join('|')}]
+  [--seen-line on|off]
   [--delay-frames 0..${RENDER_MAX_DELAY_FRAMES}] [--fps N] [--start seconds] [--duration seconds]`
 
 export interface RenderArgs {
@@ -80,6 +84,8 @@ export interface RenderArgs {
   gameMode: GameMode
   layout: LayoutName
   info: InfoLevel
+  /** The graph's second line, the calmed picture's flashes per second (--seen-line). */
+  seenLine: boolean
   delayFrames: number
   fps: number | null
   startS: number | null
@@ -95,6 +101,7 @@ const FLAGS = new Set([
   '--flash-limit',
   '--layout',
   '--info',
+  '--seen-line',
   '--delay-frames',
   '--fps',
   '--start',
@@ -193,6 +200,7 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
   if (!INFO_LEVELS.includes(info as InfoLevel)) {
     throw new Error(`--info takes one of ${INFO_LEVELS.join(', ')}, got "${info}"`)
   }
+  const seenLine = values.get('--seen-line')
   const delay = values.get('--delay-frames')
   const fps = values.get('--fps')
   const start = values.get('--start')
@@ -204,6 +212,7 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
     gameMode,
     layout: layout as LayoutName,
     info: info as InfoLevel,
+    seenLine: seenLine === undefined ? false : onOff('--seen-line', seenLine),
     delayFrames:
       delay === undefined
         ? RENDER_DEFAULT_DELAY_FRAMES
@@ -232,7 +241,7 @@ export function reportText(
   const lines = [
     `CalmFrame offline render of ${basename(args.file)}`,
     `Wrote ${out}`,
-    `${s.frames} frames at ${fps} fps, ${s.durationS.toFixed(1)} s, layout ${args.layout}`,
+    `${s.frames} frames at ${fps} fps, ${s.durationS.toFixed(1)} s, layout ${args.layout}${args.seenLine ? ", graph with the calmed picture's line" : ''}`,
     `Settings: ${lower(describeSettings(args.settings, args.delayFrames, args.gameMode))}, ${describeLimit(args.settings.flashLimit).toLowerCase()}`,
     '',
     `The overlay was on for ${s.overlayS.toFixed(1)} s of ${s.durationS.toFixed(1)} s, in ${s.episodes} ${s.episodes === 1 ? 'stretch' : 'stretches'}.`,
@@ -268,7 +277,14 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const layout = layoutFor(args.layout, args.info)
-  const renderer = new ClipRenderer(layout, args.settings, fps, args.delayFrames, args.gameMode)
+  const renderer = new ClipRenderer(
+    layout,
+    args.settings,
+    fps,
+    args.delayFrames,
+    args.gameMode,
+    args.seenLine
+  )
   const writer = new FrameWriter(ffmpeg, out, layout.width, layout.height, fps, RENDER_CRF)
   const frames = readFrames(ffmpeg, file, {
     width: layout.protectedPane.w,

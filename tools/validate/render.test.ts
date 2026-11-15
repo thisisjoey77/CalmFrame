@@ -239,6 +239,73 @@ describe('offline render: layouts and words', () => {
     }
   })
 
+  it('with --seen-line, draws the calmed picture under the limit while the original goes over', () => {
+    // A small frame with text: the panes at the top, the labels under them, then the key
+    // and the graph.
+    const graph = { x: 4, y: 170, w: 292, h: 56 }
+    const layout: Layout = {
+      ...SMALL,
+      height: 230,
+      text: { labelY: 112, graph, details: null }
+    }
+    const SEEN = [63, 185, 80]
+    const LIMIT = [210, 153, 34]
+    const BARS = [
+      [88, 166, 255],
+      [244, 112, 103]
+    ]
+    const is = (data: Uint8Array, x: number, y: number, rgb: number[]): boolean => {
+      const p = (y * layout.width + x) * 4
+      return data[p] === rgb[0] && data[p + 1] === rgb[1] && data[p + 2] === rgb[2]
+    }
+    const rowsAt = (data: Uint8Array, x: number, colors: number[][]): number[] => {
+      const rows: number[] = []
+      for (let y = graph.y; y < graph.y + graph.h; y++) {
+        if (colors.some((c) => is(data, x, y, c))) rows.push(y)
+      }
+      return rows
+    }
+    const render = (seenLine: boolean, frames: number): Uint8Array => {
+      const renderer = new ClipRenderer(layout, DEFAULT_SETTINGS, FPS, 1, 'off', seenLine)
+      const { w, h } = layout.protectedPane
+      const frame = new Uint8Array(w * h * 4).fill(255)
+      let out: Uint8Array = new Uint8Array(0)
+      for (let n = 0; n < frames; n++) {
+        const v = strobe(3)(n)
+        for (let p = 0; p < frame.length; p += 4) frame[p] = frame[p + 1] = frame[p + 2] = v
+        out = renderer.frame(frame)
+      }
+      return out
+    }
+
+    // 10 Hz from frame 30; by frame 150 the last second is all calmed.
+    const on = render(true, 150)
+    const newest = graph.x + graph.w - 1
+    const limitRow = rowsAt(on, graph.x, [LIMIT])[0]
+    const seenRows = rowsAt(on, newest, [SEEN])
+    const barRows = rowsAt(on, newest, BARS)
+    expect(limitRow).toBeDefined()
+    expect(seenRows.length).toBeGreaterThan(0)
+    // Higher on the graph is a smaller row: the original's bar reaches over the limit line,
+    // and the calmed picture's line stays under it.
+    expect(Math.min(...barRows)).toBeLessThan(limitRow)
+    expect(Math.min(...seenRows)).toBeGreaterThan(limitRow)
+    // The key above the graph has the line's colour too.
+    let keyed = false
+    for (let y = graph.y - 30; y < graph.y && !keyed; y++) {
+      for (let x = graph.x; x < graph.x + graph.w && !keyed; x++) keyed = is(on, x, y, SEEN)
+    }
+    expect(keyed).toBe(true)
+
+    // Off, the default: no line and no key anywhere in the frame.
+    const off = render(false, 60)
+    let green = 0
+    for (let y = 0; y < layout.height; y++) {
+      for (let x = 0; x < layout.width; x++) if (is(off, x, y, SEEN)) green++
+    }
+    expect(green).toBe(0)
+  }, 30_000)
+
   it('draws every layout without throwing', () => {
     for (const [name, info] of LAYOUT_NAMES.flatMap((n) =>
       INFO_LEVELS.map((i) => [n, i] as const)
@@ -305,6 +372,7 @@ describe('offline render: the command line', () => {
       out: null,
       layout: 'big-small',
       info: 'graph',
+      seenLine: false,
       delayFrames: 1,
       fps: null,
       startS: null,
@@ -359,6 +427,8 @@ describe('offline render: the command line', () => {
     expect(parseRenderArgs(['clip.mp4', '--game-mode', 'off']).gameMode).toBe('off')
     expect(parseRenderArgs(['clip.mp4', '--game-mode', 'on']).gameMode).toBe('dim')
     expect(parseRenderArgs(['clip.mp4', '--game-mode', 'hold']).gameMode).toBe('hold')
+    expect(parseRenderArgs(['clip.mp4', '--seen-line', 'on']).seenLine).toBe(true)
+    expect(parseRenderArgs(['clip.mp4', '--seen-line', 'off']).seenLine).toBe(false)
     expect(parseRenderArgs(['clip.mp4', '--sensitivity', '4']).settings.sensitivity).toEqual({
       trigger: 'early',
       streakN: 4
@@ -378,6 +448,7 @@ describe('offline render: the command line', () => {
       ['clip.mp4', '--layout', 'triple'],
       ['clip.mp4', '--info', 'everything'],
       ['clip.mp4', '--game-mode', 'yes'],
+      ['clip.mp4', '--seen-line', 'yes'],
       ['clip.mp4', '--delay-frames', '9'],
       ['clip.mp4', '--fps', '120'],
       ['clip.mp4', '--start', '-1']
@@ -391,6 +462,14 @@ describe('offline render: the command line', () => {
     expect(standard).toContain('original 4, protected picture 0')
     expect(standard).toContain('not a recording of the live overlay')
     expect(standard).not.toContain('raised')
+    expect(standard).not.toContain("calmed picture's line")
+    const withLine = reportText(
+      parseRenderArgs(['clip.mp4', '--seen-line', 'on']),
+      'out.mp4',
+      60,
+      summary
+    )
+    expect(withLine).toContain("graph with the calmed picture's line")
     const raised = reportText(
       parseRenderArgs(['clip.mp4', '--flash-limit', '7']),
       'out.mp4',
