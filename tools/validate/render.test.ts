@@ -133,7 +133,7 @@ describe('offline render: the pipeline', () => {
     // 10 Hz between sRGB 80 and 230, after a lead-in at the dark level.
     const level = (n: number): number =>
       n < LEAD_IN ? 80 : Math.floor((n - LEAD_IN) / 3) % 2 === 0 ? 230 : 80
-    const renderer = new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, 1, true)
+    const renderer = new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, 1, 'dim')
     const { w, h } = SMALL.protectedPane
     const frame = new Uint8Array(w * h * 4).fill(255)
     const seen: number[] = []
@@ -153,6 +153,32 @@ describe('offline render: the pipeline', () => {
     const s = renderer.summary()
     expect(s.episodes).toBe(1)
     expect(s.firstOverlayFrame).toBe(LEAD_IN + 6 + 1)
+    expect(s.standard.protectedPane).toBe(0)
+  })
+
+  it('game mode hold: keeps the level it started at through a strobe, and is always drawn', () => {
+    // 10 Hz between sRGB 80 and 230, after a lead-in at the dark level.
+    const level = (n: number): number =>
+      n < LEAD_IN ? 80 : Math.floor((n - LEAD_IN) / 3) % 2 === 0 ? 230 : 80
+    const renderer = new ClipRenderer(SMALL, DEFAULT_SETTINGS, FPS, 1, 'hold')
+    const { w, h } = SMALL.protectedPane
+    const frame = new Uint8Array(w * h * 4).fill(255)
+    const seen: number[] = []
+    for (let n = 0; n < 240; n++) {
+      const v = level(n)
+      for (let p = 0; p < frame.length; p += 4) frame[p] = frame[p + 1] = frame[p + 2] = v
+      const canvas = renderer.frame(frame)
+      seen.push(SRGB8_TO_LINEAR[canvas[(50 * SMALL.width + 90) * 4]])
+    }
+    // Before the detector fires the frames pass as they are, one frame late.
+    expect(seen[LEAD_IN + 1]).toBeCloseTo(SRGB8_TO_LINEAR[230], 3)
+    expect(swing(seen.slice(120))).toBeLessThan(LUMINANCE_THRESHOLD)
+    // It holds the dark level it was at, not the middle of the two.
+    expect(Math.max(...seen.slice(120))).toBeLessThan(SRGB8_TO_LINEAR[80] + LUMINANCE_THRESHOLD)
+    const s = renderer.summary()
+    expect(s.episodes).toBe(1)
+    expect(s.firstOverlayFrame).toBe(LEAD_IN + 6 + 1)
+    expect(s.standard.original).toBeGreaterThan(0)
     expect(s.standard.protectedPane).toBe(0)
   })
 
@@ -232,11 +258,13 @@ describe('offline render: layouts and words', () => {
         },
         2
       ),
-      ...describeSettings(DEFAULT_SETTINGS, 1, true),
+      ...describeSettings(DEFAULT_SETTINGS, 1, 'dim'),
+      ...describeSettings(DEFAULT_SETTINGS, 1, 'hold'),
       describeLimit(3),
       describeLimit(7)
     ]
     expect(lines).toContain('GAME MODE: ON')
+    expect(lines).toContain('GAME MODE: HOLD THE USUAL LOOK')
     expect(lines).toContain('SENSITIVITY: STANDARD (3 CHANGES)')
     expect(lines).toContain('IGNORE MOVEMENT: ON')
     expect(lines).toContain('KEEP MOTION SHARP: OFF')
@@ -323,8 +351,10 @@ describe('offline render: the command line', () => {
       out: 'demo.mp4'
     })
     expect(parseRenderArgs(['clip.mp4', '--info', 'full']).info).toBe('full')
-    expect(parseRenderArgs(['clip.mp4']).gameMode).toBe(false)
-    expect(parseRenderArgs(['clip.mp4', '--game-mode', 'on']).gameMode).toBe(true)
+    expect(parseRenderArgs(['clip.mp4']).gameMode).toBe('off')
+    expect(parseRenderArgs(['clip.mp4', '--game-mode', 'off']).gameMode).toBe('off')
+    expect(parseRenderArgs(['clip.mp4', '--game-mode', 'on']).gameMode).toBe('dim')
+    expect(parseRenderArgs(['clip.mp4', '--game-mode', 'hold']).gameMode).toBe('hold')
     expect(parseRenderArgs(['clip.mp4', '--sensitivity', '4']).settings.sensitivity).toEqual({
       trigger: 'early',
       streakN: 4

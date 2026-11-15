@@ -14,9 +14,11 @@
  * `delayFrames`, over the screen as it is by then. So the first flash or two of a burst get
  * through, as they do live.
  *
- * Game mode (experimental, "Game mode" in the spec) swaps the calming for zoneDim.ts: big
- * zones, brightness only, dimmed and never lifted. It also draws its picture on every
- * frame, hazard or not, so the viewer's delay never changes.
+ * Game mode (experimental, "Game mode" in the spec) swaps the calming for one of two
+ * methods, and draws its picture on every frame, hazard or not, so the viewer's delay never
+ * changes. 'dim' is zoneDim.ts: big zones, brightness only, dimmed and never lifted. 'hold'
+ * is sceneHold.ts: targets attached to the scrolling scene that hold still against a flash,
+ * so the frames that look as the level usually does pass untouched.
  *
  * This file has no ffmpeg or file access, so the tests drive it with generated frames.
  * render.ts is the command around it.
@@ -27,6 +29,8 @@ import { averageToGrid } from '../../src/core/gridAverage'
 import { SRGB8_TO_LINEAR, linearToSrgb } from '../../src/core/luminance'
 import { ReferenceFilter } from '../../src/core/referenceFilter'
 import { correctImage } from '../../src/core/regionCorrect'
+import { SceneHold } from '../../src/core/sceneHold'
+import { ScrollEstimator } from '../../src/core/scroll'
 import { OverlayStateMachine } from '../../src/core/stateMachine'
 import { ZoneDimTargets, dimImage, gridToZones } from '../../src/core/zoneDim'
 import {
@@ -62,6 +66,11 @@ export interface Rect {
   w: number
   h: number
 }
+
+/** How game mode calms a hazard: not in use ('off'), by dimming in big zones ('dim',
+ *  zoneDim.ts), or by holding each piece of the scene at its usual look ('hold',
+ *  sceneHold.ts). */
+export type GameMode = 'off' | 'dim' | 'hold'
 
 export type LayoutName = 'big-small' | 'equal' | 'protected-only'
 export const LAYOUT_NAMES: readonly LayoutName[] = ['big-small', 'equal', 'protected-only']
@@ -257,7 +266,7 @@ class FlaggedSeconds {
 export function describeSettings(
   settings: Settings,
   delayFrames: number,
-  gameMode = false
+  gameMode: GameMode = 'off'
 ): string[] {
   const s = settings.sensitivity
   const names = ['MOST SENSITIVE', 'STANDARD', 'FEWER FALSE ALARMS']
@@ -268,9 +277,11 @@ export function describeSettings(
   return [
     `SENSITIVITY: ${sensitivity}`,
     `IGNORE MOVEMENT: ${settings.concurrency === 'one-way' ? 'ON' : 'OFF'}`,
-    gameMode
-      ? 'GAME MODE: ON'
-      : `KEEP MOTION SHARP: ${settings.mitigation === 'correct' ? 'ON' : 'OFF'}`,
+    gameMode === 'hold'
+      ? 'GAME MODE: HOLD THE USUAL LOOK'
+      : gameMode === 'dim'
+        ? 'GAME MODE: ON'
+        : `KEEP MOTION SHARP: ${settings.mitigation === 'correct' ? 'ON' : 'OFF'}`,
     `OVERLAY DELAY: ${delayFrames} ${delayFrames === 1 ? 'FRAME' : 'FRAMES'}`
   ]
 }
@@ -301,6 +312,11 @@ export class ClipRenderer {
   /** Game mode: each zone's brightness now, and its target. */
   private readonly zones: Float64Array | null
   private readonly zoneTargets: ZoneDimTargets | null
+  /** Game mode 'hold': the scene-attached targets, the scroll they follow, and the encoded
+   *  brightness of the frame the scroll is measured on. */
+  private readonly hold: SceneHold | null
+  private readonly scroll: ScrollEstimator | null
+  private readonly luma: Float32Array | null
   private readonly pending: Pending[]
   private readonly pane: Uint8Array
   private readonly small: Uint8Array | null
@@ -325,15 +341,15 @@ export class ClipRenderer {
   /**
    * @param fps the constant frame rate of the frames to come
    * @param delayFrames how many frames late the overlay's picture reaches the viewer
-   * @param gameMode calm with zoneDim.ts and keep the overlay's picture up all the time,
-   *        whatever the settings' mitigation method says
+   * @param gameMode 'dim' or 'hold': calm with zoneDim.ts or sceneHold.ts and keep the
+   *        overlay's picture up all the time, whatever the settings' mitigation method says
    */
   constructor(
     private readonly layout: Layout,
     private readonly settings: Settings = DEFAULT_SETTINGS,
     private readonly fps: number,
     private readonly delayFrames: number,
-    private readonly gameMode = false
+    private readonly gameMode: GameMode = 'off'
   ) {
     if (!(fps > 0)) throw new Error(`The frame rate must be positive, got ${fps}`)
     if (!Number.isInteger(delayFrames) || delayFrames < 0) {
@@ -362,11 +378,15 @@ export class ClipRenderer {
         ? new Uint8Array(originalPane.w * originalPane.h * 4).fill(255)
         : null
     const sharp = settings.mitigation === 'correct'
-    this.smoothed = gameMode || sharp ? null : new Float32Array(pixels * 3)
-    this.targets = !gameMode && sharp ? new ReferenceFilter(GRID_CELLS) : null
+    const game = gameMode !== 'off'
+    this.smoothed = game || sharp ? null : new Float32Array(pixels * 3)
+    this.targets = !game && sharp ? new ReferenceFilter(GRID_CELLS) : null
     const zoneCount = GAME_ZONE_COLS * GAME_ZONE_ROWS
-    this.zones = gameMode ? new Float64Array(zoneCount) : null
-    this.zoneTargets = gameMode ? new ZoneDimTargets(zoneCount) : null
+    this.zones = gameMode === 'dim' ? new Float64Array(zoneCount) : null
+    this.zoneTargets = gameMode === 'dim' ? new ZoneDimTargets(zoneCount) : null
+    this.hold = gameMode === 'hold' ? new SceneHold(this.w, this.h) : null
+    this.scroll = gameMode === 'hold' ? new ScrollEstimator(this.w, this.h) : null
+    this.luma = gameMode === 'hold' ? new Float32Array(pixels) : null
     this.pending = Array.from({ length: delayFrames + 1 }, () => ({
       opacity: 0,
       active: false,
@@ -416,6 +436,14 @@ export class ClipRenderer {
     } else if (this.zones && this.zoneTargets) {
       gridToZones(grid, 4, GRID_COLS, GRID_ROWS, GAME_ZONE_COLS, GAME_ZONE_ROWS, this.zones)
       this.zoneTargets.step(this.zones, alpha)
+    } else if (this.hold && this.scroll && this.luma) {
+      // Its targets keep their own time (holdTarget.ts), so the filter's alpha is not used.
+      const luma = this.luma
+      for (let p = 0, i = 0; i < pixels; p += 4, i++) {
+        luma[i] = LUMA_R * rgba[p] + LUMA_G * rgba[p + 1] + LUMA_B * rgba[p + 2]
+      }
+      this.scroll.step(luma)
+      this.hold.step(linear, this.scroll.dx, this.scroll.dy, tMs)
     }
 
     const d = this.detector.step(grid, tMs)
@@ -426,9 +454,9 @@ export class ClipRenderer {
 
     // What the overlay draws for this frame (the app's Pass C), queued for the viewer.
     const now = this.pending[n % this.pending.length]
-    now.opacity = this.gameMode ? 1 : out.opacity
+    now.opacity = this.gameMode !== 'off' ? 1 : out.opacity
     now.active = out.opacity > 0
-    if (now.opacity > 0) this.drawOverlay(now.picture, out.dim, out.red)
+    if (now.opacity > 0) this.drawOverlay(now.picture, out.dim, out.red, out.opacity)
 
     // What the viewer sees: the overlay drawn `delayFrames` ago, over the screen as it is now.
     const shown =
@@ -472,8 +500,10 @@ export class ClipRenderer {
     }
   }
 
-  /** d times the calmed picture, desaturated for a red hazard, in linear light. */
-  private drawOverlay(picture: Float32Array, dim: number, red: boolean): void {
+  /** d times the calmed picture, desaturated for a red hazard, in linear light.
+   *  @param strength the state machine's opacity. Game mode 'hold' is drawn all the time
+   *         and corrects only this much: nothing while safe, in full during a hazard. */
+  private drawOverlay(picture: Float32Array, dim: number, red: boolean, strength: number): void {
     if (this.smoothed) picture.set(this.smoothed)
     else if (this.targets) {
       correctImage(
@@ -498,6 +528,17 @@ export class ClipRenderer {
         GAME_ZONE_ROWS,
         picture
       )
+    } else if (this.hold) {
+      const linear = this.linear
+      if (strength <= 0) picture.set(linear)
+      else {
+        this.hold.draw(linear, picture)
+        if (strength < 1) {
+          for (let q = 0; q < picture.length; q++) {
+            picture[q] = linear[q] + strength * (picture[q] - linear[q])
+          }
+        }
+      }
     }
     if (dim === 1 && !red) return
     for (let q = 0; q < picture.length; q += 3) {

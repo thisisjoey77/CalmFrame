@@ -484,6 +484,44 @@ Zones of 32×18 did as well as 16×9. Zones of 8×5 let 2 of the 22 seconds thro
 
 A level that stays under the limit needs none of this. The official level Electrodynamix peaks at 2.5 flashes a second: the strict trigger never fires on it, and the default sensitivity fires in 3 of its 107 seconds.
 
+### Game mode: hold the usual look (experimental, the offline render only)
+
+Added Sat Nov 14, late afternoon, as a second game-mode method: `npm run render -- <video> --game-mode hold`. `--game-mode on` is still the dimming method above. The user compared the two on a Geometry Dash level in a scratch prototype, judged this one right, and asked for it in the render. `src/core/sceneHold.ts`, with `holdTarget.ts`, `sceneGrid.ts` and `scroll.ts`.
+
+Every earlier method steers each region toward a slow average of its brightness. During a flash that average sits between the dark and the bright frames, so every frame is changed, and the picture ends up hazy (when dark frames are lifted) or dark (when bright frames are dimmed). This method changes what the target is, and what it is attached to.
+
+- **Hold, then follow.** A region's target stays where it is while the region has been off it, in one direction, for no longer than 180 ms. In that time it moves by at most the smoothing target, 0.07. A hazardous flash reverses within 167 ms (Step 5), so through any flash the target moves by less than the flash threshold. Once a change has lasted longer than 180 ms it cannot be a hazardous flash: it is the level changing, and the target catches up with a 47 ms time constant. So the frames that look as the level usually does pass untouched, and only the odd frames out are pulled back. A strobe with equal halves keeps the state it started in.
+- **Targets attached to the scene.** The game scrolls at about 1,300 px/s, so a cell fixed to the screen sees the whole level go by, and holding its brightness still would flatten the level. The grid of targets moves with the picture instead: 80 cells across, each on one piece of the level for as long as that piece is on screen. A level that only scrolls then has every cell on its target and is left exactly as it is. Nothing is resampled as the grid moves: a cell's stored values are found from its place in the scene.
+- **The scroll is measured from edges.** `scroll.ts` finds how far the picture moved since the last frame by lining up where the edges are, first along each axis in a few bands, then on the whole edge picture around that answer and around the recent scroll. A flash changes brightness and leaves the edges where they were. When nothing lines up (a blank or washed-out frame), the scroll is taken to be the median of the last 9 trusted answers.
+- **Only a shared change is corrected.** A cell is corrected in full when cells off their targets the same way fill 12% of the surrounding area window (a third of the screen each way, as in Step 6), and not at all under 6%. Both are well under the detector's 25%. A cell that changes on its own, such as the player, is left alone. In a flash frame such a mover takes the correction of the cells near it that are not movers, so it is re-lit with the picture around it.
+- **A cell that scrolls into view** starts from its own mean, corrected as the known cells around it are: on its mean in a calm frame. If its first frame is a flash frame, that is only a guess, and the cell is measured again at the first calm frame.
+- **Dimming keeps the hue.** A region that is too bright is scaled by one factor for red, green and blue. A region that is too dark is lifted per channel, toward the remembered colour and not toward grey.
+- **Drawn all the time,** like the other game mode, and corrected only as much as the state machine's opacity: nothing while safe, in full during a hazard. Detection is unchanged.
+
+The current frame is always what is drawn, so nothing smears, and the method adds no delay of its own.
+
+**Results (Sat Nov 14).** "Ultra Violence" 0:00 to 0:20, through `npm run render` with default settings: the original is flagged in 5 of the 20 seconds at the standard (the strict trigger, the limit of 3), the protected picture in 0. With the app's default trigger: 12 and 2.
+
+A scratch prototype of an earlier version (640×360, not in the repo) was also run on four level sections. The version in the repo differs from it in how a cell's first target is found and in how a mover is re-lit, and of the four only "Ultra Violence" has been run with it. Brightness is the mean, 0 to 255.
+
+| Level section | Original | Dimming (game mode on) | Hold the usual look |
+| --- | --- | --- | --- |
+| Ultra Violence, 12 s: flagged seconds, brightness | 5, 54 | 0, 25 | 0, 50 |
+| Problematic, 30 s | 3, 32 | 0, 15 | 0, 24 |
+| Turbo Doofus Mode, 30 s | 15, 64 | 1, 28 | 0, 64 |
+| iSpyWithMyLittleEye, 22 s | 22, 109 | 10, 48 | 4, 105 |
+
+**What it gives up:**
+
+- **Corrected frames are coarser.** A corrected frame is re-lit in patches the size of a cell (16 px in the render's large pane, 24 px at 1920). Detail the flash frame itself lacks comes back only that coarsely, and bright things remembered from the calm frames show as soft patches. Pinned by a test.
+- **A real change of brightness arrives 180 ms late** while the overlay is on. Pinned by a test.
+- **A strobe between two different pictures still forces a choice.** One section of "Turbo Doofus Mode" flips between a red level and a black one. Holding the red look means lifting every black frame, which looks mushy; holding the black look is clean and darker. A rule that drops to the darker look when it keeps coming back was tried in the prototype (brightness 50 on that level, still 0 flagged) and is not built.
+- **Something fixed to the screen that flashes is treated as part of the scene** and comes out mushy. A second set of targets fixed to the screen would cover it. Not built.
+- **It needs the scroll.** On "iSpyWithMyLittleEye" the picture is too busy to follow and the method fails: 4 of 22 seconds still flagged.
+- **With "Ignore movement" off, the output is flagged as often as the original.** That setting counts the scrolling itself, calm sections included, so it says little about a side-scroller.
+- **Not in the app.** The live overlay would need the scroll measured on the same frame it corrects, a GPU pass for the scene grid, a setting and the user's on-screen check. Whether the scroll can be measured in time on the GPU is not known.
+- **Slow offline.** About 7 frames a second on the Windows laptop, so a 20 s clip takes 3 minutes.
+
 ## Architecture
 
 CalmFrame is one Electron app with three windows and one hot loop. All per-frame work lives in the overlay window's renderer, so no frame ever crosses a process boundary and adds latency.

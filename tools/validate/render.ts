@@ -15,9 +15,12 @@
  *   --keep-motion-sharp on|off     "Keep motion sharp" (off)
  *   --flash-limit 3..10            the flash limit, per second (3, the WCAG limit)
  * and one the app does not have yet:
- *   --game-mode on|off             experimental (off): calm by dimming in big zones, never
- *                                  lifting toward white, with the overlay always up. It
+ *   --game-mode on|off|hold        experimental (off), with the overlay always up. It
  *                                  replaces the method --keep-motion-sharp chooses.
+ *                                  on: calm by dimming in big zones, never lifting toward
+ *                                  white. hold: follow the scrolling scene and hold each
+ *                                  piece of it at its usual look, so only the frames that
+ *                                  flash are changed.
  * and how to draw it:
  *   --layout big-small|equal|protected-only   (big-small)
  *   --info graph|full              what is written into the picture besides the two labels:
@@ -58,6 +61,7 @@ import {
   describeLimit,
   describeSettings,
   layoutFor,
+  type GameMode,
   type InfoLevel,
   type LayoutName,
   type RenderSummary
@@ -65,7 +69,7 @@ import {
 
 export const USAGE = `usage: render <video> [--out file.mp4]
   [--sensitivity 2|3|4|strict] [--ignore-movement on|off] [--keep-motion-sharp on|off]
-  [--game-mode on|off]
+  [--game-mode on|off|hold]
   [--flash-limit ${FLASH_LIMIT_MIN}..${FLASH_LIMIT_MAX}] [--layout ${LAYOUT_NAMES.join('|')}] [--info ${INFO_LEVELS.join('|')}]
   [--delay-frames 0..${RENDER_MAX_DELAY_FRAMES}] [--fps N] [--start seconds] [--duration seconds]`
 
@@ -73,7 +77,7 @@ export interface RenderArgs {
   file: string
   out: string | null
   settings: Settings
-  gameMode: boolean
+  gameMode: GameMode
   layout: LayoutName
   info: InfoLevel
   delayFrames: number
@@ -174,7 +178,12 @@ export function parseRenderArgs(argv: readonly string[]): RenderArgs {
   }
 
   const game = values.get('--game-mode')
-  const gameMode = game === undefined ? false : onOff('--game-mode', game)
+  let gameMode: GameMode = 'off'
+  if (game === 'hold') gameMode = 'hold'
+  else if (game === 'on') gameMode = 'dim'
+  else if (game !== undefined && game !== 'off') {
+    throw new Error(`--game-mode takes on, off or hold, got "${game}"`)
+  }
 
   const layout = values.get('--layout') ?? 'big-small'
   if (!LAYOUT_NAMES.includes(layout as LayoutName)) {

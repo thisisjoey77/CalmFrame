@@ -495,3 +495,57 @@ export const GAME_ZONE_ROWS = 9
  *  Half, because a one-sided target leaves about twice the swing of the two-sided average
  *  for the same alpha. */
 export const GAME_RISE_FACTOR = 0.5
+
+// ---------------------------------------------------------------------------
+// Game mode, second method: hold the usual look (experimental; the offline render only)
+// ---------------------------------------------------------------------------
+
+/** The scene grid is this many cells across the picture: 16 px cells in the render's large
+ *  pane, 24 px at 1920. Its targets are attached to the scrolling scene. Spec: "Game mode:
+ *  hold the usual look". */
+export const GAME_HOLD_CELLS_ACROSS = 80
+/** A cell is off its target when its furthest channel differs by more than this (linear). */
+export const GAME_HOLD_TOLERANCE = 0.02
+/** A target holds still while its cell has been off it, in one direction, for no longer
+ *  than this. A hazardous flash reverses within FAST_TRANSITION_INTERVAL_MS (167 ms), so
+ *  anything that has lasted longer is the scene changing, and the target follows it. */
+export const GAME_HOLD_MS = 180
+/** Time constant of that catch-up: about 0.3 of the way per frame at 60 fps. */
+export const GAME_HOLD_CATCH_UP_MS = 47
+/** A cell is corrected only when the change is shared: when cells off their targets in the
+ *  same direction fill this share of the surrounding area window. The correction fades in
+ *  from START to FULL, both well under the detector's AREA_LIMIT, so anything the detector
+ *  could count is corrected in full, and a lone mover (the player) is left alone. */
+export const GAME_HOLD_SHARED_START = 0.06
+export const GAME_HOLD_SHARED_FULL = 0.12
+/** How far off its target a cell must be to count toward that share: not at all at START,
+ *  fully at FULL (linear). */
+export const GAME_HOLD_OFF_START = 0.02
+export const GAME_HOLD_OFF_FULL = 0.06
+/** A cell that changed on its own is remembered as a mover for about this long, so that in
+ *  a flash frame it is re-lit with its surroundings, not flattened into the background. */
+export const GAME_HOLD_MOVER_MEMORY_MS = 100
+/** A mover takes the mean and target of the cells within this many cells of it that are
+ *  not movers themselves. */
+export const GAME_HOLD_MOVER_RADIUS = 4
+
+/** The scroll estimator's distances are given for a picture this wide and scale with the
+ *  picture. It measures how far the picture's content moved since the last frame, from edge
+ *  positions, which a flash does not move. */
+export const SCROLL_REFERENCE_WIDTH = 640
+/** Largest scroll per frame the first, coarse step looks for, in pixels at the reference
+ *  width: 32 is 5,760 px/s at 1920 wide and 60 fps. */
+export const SCROLL_MAX_X = 32
+export const SCROLL_MAX_Y = 12
+/** The coarse step compares edge profiles in this many horizontal and vertical bands. */
+export const SCROLL_BANDS_X = 6
+export const SCROLL_BANDS_Y = 8
+/** The fine step compares edge pictures on every SCROLL_STRIDE-th pixel, leaving out a
+ *  margin of SCROLL_MARGIN pixels, and climbs at most SCROLL_CLIMB_STEPS from each start. */
+export const SCROLL_STRIDE = 2
+export const SCROLL_MARGIN = 40
+export const SCROLL_CLIMB_STEPS = 6
+/** Below this correlation the fine step's answer is not trusted (a blank frame, a cut), and
+ *  the scroll is taken to be the median of the last SCROLL_HISTORY trusted answers. */
+export const SCROLL_MIN_CORRELATION = 0.35
+export const SCROLL_HISTORY = 9
