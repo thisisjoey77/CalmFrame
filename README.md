@@ -6,7 +6,7 @@
 
 CalmFrame is a Windows app that watches the whole screen for flashing that breaks the WCAG 2.3.1 flash thresholds. When it finds some, it covers the screen with a smoothed copy within one or two flashes. It works across every app (video players, browsers, games in borderless-windowed mode) and runs entirely offline. It reduces exposure to hazardous flashing. It is not a medical device and does not guarantee anything.
 
-Built at EmoryHacks 2026 (Entertainment track).
+Winner of Entertainment track at Emoryhacks 2026 + Coder for Good Sponsor prize. 
 
 ## How to run
 
