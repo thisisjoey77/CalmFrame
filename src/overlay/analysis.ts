@@ -20,6 +20,13 @@
  * grid ready -> decision -> overlay drawn. The grid wait is kept separately for frames
  * analysed while the overlay was drawn, so the cost of drawing to detection is visible.
  *
+ * With "Keep motion sharp" ticked (trail #10, "Stretch: correct brightness per region"), step
+ * 3 draws the experimental correction pass instead: the current frame with each region's
+ * brightness scaled to its running average. Its targets are updated in step 1 next to
+ * Pass B, with the same alpha, on every frame whichever method is drawn, so switching
+ * between the two never starts cold. Detection, the state machine and the viewer check are
+ * the same for both.
+ *
  * Runs in the overlay renderer. Only stats and the 96x54 thumbnails every few frames,
  * hazard and flash events, and state changes leave this module. Frames never cross IPC.
  */
@@ -28,9 +35,11 @@ import {
   ALPHA_WARM,
   ANALYSIS_STATS_WINDOW,
   DEFAULT_CONCURRENCY_RULE,
+  DEFAULT_MITIGATION_METHOD,
   GRID_CELLS,
   HOLD_MS,
-  RED_DESATURATION
+  RED_DESATURATION,
+  type MitigationMethod
 } from '../shared/config'
 import type {
   DetectionStats,
@@ -46,11 +55,13 @@ import { FlashEventTracker, type FlashEvent } from '../core/events'
 import { OverlayStateMachine, type OverlayStateName, type StateOutput } from '../core/stateMachine'
 import { encodeGridRgba8 } from '../core/thumbnail'
 import { ViewerCheck, type ViewerCheckResult } from '../core/viewerCheck'
+import type { CorrectPass } from './correctPass'
 import type { FrameImage, GridPass, GridReadback } from './gridPass'
 import type { SmoothPass } from './smoothPass'
 import { SampleRing } from './stats'
 
-/** The detector options the user's settings choose: trigger, N and the concurrency rule. */
+/** The detector options the user's settings choose: trigger, N, the concurrency rule and
+ *  the flash limit. */
 export type DetectorSettings = ReturnType<typeof detectorOptionsFor>
 
 export interface AnalysisSink {
@@ -74,8 +85,8 @@ function reasonFor(from: OverlayStateName, to: OverlayStateName): string {
 }
 
 export class LiveAnalysis {
-  /** The sensitivity slider and the Step 5a switch ("Ignore movement"; off is the detector
-   *  as it was before the rule). */
+  /** The sensitivity slider, the Step 5a switch ("Ignore movement"; off is the detector
+   *  as it was before the rule) and the flash limit (3 unless raised for testing). */
   private options: DetectorSettings
   // The GPU reads back RGBA, so the detector and the viewer check take four values per cell.
   private detector: Detector
@@ -89,6 +100,8 @@ export class LiveAnalysis {
   private stopped = false
   private pollTimer: ReturnType<typeof setTimeout> | null = null
 
+  /** How a hazard is drawn: the user's "Keep motion sharp" setting. */
+  private method: MitigationMethod = DEFAULT_MITIGATION_METHOD
   /** Protection switched on (main's kill switch and watchdog switch it off). */
   private enabled = true
   /** The latest state machine output, which Passes B and C use. */
@@ -176,7 +189,10 @@ export class LiveAnalysis {
     private readonly pass: GridPass,
     private readonly smooth: SmoothPass,
     private readonly sink: AnalysisSink,
-    options: DetectorSettings
+    options: DetectorSettings,
+    /** The experimental correction pass, or null if it could not start or failed its
+     *  self-test. Without it, every hazard is drawn with the smoothing filter. */
+    private readonly correct: CorrectPass | null = null
   ) {
     this.options = { ...options }
     this.detector = this.makeDetector()
@@ -202,6 +218,7 @@ export class LiveAnalysis {
     if (this.pass.analyse(image, tMs, alpha)) {
       const t0 = performance.now()
       this.smooth.update(this.pass.width, this.pass.height, alpha)
+      this.correct?.update(alpha)
       this.smoothMs.push(performance.now() - t0)
     } else if (this.drawn) {
       this.busySkipsDrawn++
@@ -246,8 +263,8 @@ export class LiveAnalysis {
   }
 
   /**
-   * Apply the user's detector settings: the sensitivity slider's trigger and N, and the
-   * concurrency rule (Step 5a). If they changed, the detector starts again with no
+   * Apply the user's detector settings: the sensitivity slider's trigger and N, the
+   * concurrency rule (Step 5a) and the flash limit. If they changed, the detector starts again with no
    * history, so a hazard in progress ends and has to be found again under the new
    * settings. The state machine carries on with its usual hold and fade, which outlasts
    * the time a running strobe needs to trigger again.
@@ -257,12 +274,31 @@ export class LiveAnalysis {
     if (
       options.trigger === o.trigger &&
       options.streakN === o.streakN &&
-      options.concurrency === o.concurrency
+      options.concurrency === o.concurrency &&
+      options.flashLimit === o.flashLimit
     ) {
       return
     }
     this.options = { ...options }
     this.detector = this.makeDetector()
+  }
+
+  /**
+   * The user's "Keep motion sharp" setting: which pass draws a hazard. It takes effect on
+   * the next frame drawn, also in the middle of a hazard, and changes nothing else.
+   */
+  setMitigation(method: MitigationMethod): void {
+    if (method === this.method) return
+    this.method = method
+    const missing = method === 'correct' && this.correct === null
+    console.log(
+      `[mitigation] ${method}${missing ? ' asked for, but the correction pass is not available: smoothing instead' : ''}`
+    )
+  }
+
+  /** The method the overlay draws with: the setting, unless the correction pass is missing. */
+  private get drawMethod(): MitigationMethod {
+    return this.method === 'correct' && this.correct !== null ? 'correct' : 'smooth'
   }
 
   private makeDetector(): Detector {
@@ -310,7 +346,8 @@ export class LiveAnalysis {
         dim: this.dim,
         opacity: this.opacity,
         red: this.red,
-        drawn: this.drawn
+        drawn: this.drawn,
+        method: this.drawMethod
       },
       viewer: {
         checking: this.viewerChecking,
@@ -360,6 +397,7 @@ export class LiveAnalysis {
     this.pass.cancel()
     this.smooth.cancelDrawFence()
     this.smooth.reset()
+    this.correct?.reset()
     if (this.drawn) {
       this.smooth.clear()
       this.drawn = false
@@ -459,7 +497,14 @@ export class LiveAnalysis {
   private present(): void {
     if (this.enabled && this.opacity > 0 && this.smooth.ready) {
       const t0 = performance.now()
-      this.smooth.draw(this.dim, this.opacity, this.red ? RED_DESATURATION : 0)
+      const desaturation = this.red ? RED_DESATURATION : 0
+      // The correction pass reads the frame, its grid and the targets that the latest
+      // frame callback left on the GPU, which all belong to one captured frame.
+      if (this.correct !== null && this.drawMethod === 'correct' && this.correct.ready) {
+        this.correct.draw(this.pass.width, this.pass.height, this.dim, this.opacity, desaturation)
+      } else {
+        this.smooth.draw(this.dim, this.opacity, desaturation)
+      }
       if (this.smooth.fenceDraw()) {
         this.fencedDecidedAt = this.lastDecidedAt
         this.fencedT = this.lastDecidedT

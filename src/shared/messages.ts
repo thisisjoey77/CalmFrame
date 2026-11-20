@@ -6,7 +6,7 @@
 import type { HazardType } from '../core/detector'
 import type { FlashEvent } from '../core/events'
 import type { OverlayStateName } from '../core/stateMachine'
-import type { ConcurrencyRule } from './config'
+import type { ConcurrencyRule, MitigationMethod } from './config'
 import type { Settings } from './settings'
 
 export const IPC = {
@@ -56,10 +56,15 @@ export const IPC = {
   /** main -> dashboard and debug: each heartbeat with main's view of the overlay
    *  (StatusBeat). The status is derived from these. */
   statusBeat: 'status-beat',
-  /** overlay -> main -> dashboard: the thumbnails, every STATS_EVERY_N_FRAMES frames. */
+  /** overlay -> main: the thumbnails, every STATS_EVERY_N_FRAMES frames. No window shows
+   *  them since the dashboard's redesign (Sat Nov 14), so main drops them; the overlay
+   *  still sends them, so they can come back without touching the frame loop. */
   thumbnails: 'thumbnails',
-  /** overlay -> main -> dashboard: a flash event started or ended. */
+  /** overlay -> main: a flash event started or ended. Main logs it. */
   flashEvent: 'flash-event',
+  /** dashboard -> main: the height in DIP the panel's content needs. Main fits the window
+   *  to it, so the panel is exactly as tall as what it shows. */
+  fitDashboard: 'fit-dashboard',
   /** overlay -> main, invoke: start the native capture module (trail #9) and send its
    *  frames to the overlay as shared textures. Resolves a NativeCaptureStart. */
   startNativeCapture: 'start-native-capture',
@@ -70,7 +75,8 @@ export const IPC = {
 /** What a renderer asks main for when it loads. */
 export interface InitInfo {
   settings: Settings
-  /** When the app started, wall-clock ms since the epoch. The event log counts from it. */
+  /** When the app started, wall-clock ms since the epoch. Main's flash event log lines
+   *  count from it. */
   startedAtWallMs: number
   /** Capture with the native module instead of Chromium (CALMFRAME_NATIVE_CAPTURE=1). */
   nativeCapture: boolean
@@ -192,6 +198,17 @@ export interface SmoothSelfTestResult {
   roundTripMaxDiff: number
   stepMaxDiff: number
   detail: string
+  /** The experimental correction pass (trail #10), checked against its CPU twin. Its
+   *  failure does not fail the pipeline: "Keep motion sharp" then falls back to smoothing. */
+  correction?: CorrectSelfTestResult
+}
+
+/** Correction pass startup self-test: one corrected frame against the CPU twin
+ *  (src/core/regionCorrect.ts), in 8-bit codes. */
+export interface CorrectSelfTestResult {
+  pass: boolean
+  maxDiff: number
+  detail: string
 }
 
 /** Sent every HEARTBEAT_MS from a timer in the overlay renderer. Its arrival is what the
@@ -213,6 +230,9 @@ export interface StatusBeat extends Heartbeat {
   overlayVisible: boolean
   /** Why main last switched protection off, for the status line. Null while it is on. */
   offReason: string | null
+  /** Main switched protection off because the user asked (the dashboard's switch, the tray
+   *  menu or the kill switch), not because something failed. False while it is on. */
+  offByUser: boolean
   /** How old the heartbeat already was when main sent this. Main also re-sends the latest
    *  heartbeat when it switches protection off, and that one must not look fresh. */
   ageMs: number
@@ -266,7 +286,16 @@ export interface DetectionStats {
   /** Overlay state machine. */
   state: OverlayStateName
   /** What the overlay is doing now (state machine output), and whether it is drawn. */
-  smoothing: { alpha: number; dim: number; opacity: number; red: boolean; drawn: boolean }
+  smoothing: {
+    alpha: number
+    dim: number
+    opacity: number
+    red: boolean
+    drawn: boolean
+    /** The method the overlay draws with now. 'smooth' although the setting says 'correct'
+     *  means the correction pass is not available (its self-test failed). */
+    method: MitigationMethod
+  }
   /** The viewer check (src/core/viewerCheck.ts): the detector run on what the viewer sees
    *  while the overlay is drawn. */
   viewer: {
@@ -370,8 +399,8 @@ export interface CalmFrameApi {
   updateSettings(patch: Partial<Settings>): void
   setProtection(enabled: boolean): Promise<boolean>
   onStatusBeat(callback: (beat: StatusBeat) => void): void
-  onThumbnails(callback: (thumbnails: Thumbnails) => void): void
-  onFlashEvent(callback: (event: FlashEventMessage) => void): void
+  // dashboard
+  fitDashboard(heightDip: number): void
   // debug window
   runSelfCheck(): void
   restartCapture(size: CaptureSize): void

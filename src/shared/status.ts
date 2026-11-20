@@ -22,6 +22,9 @@ export interface StatusView {
   /** The on/off switch as the overlay reports it: off when the user or a failure switched
    *  protection off, or when the overlay cannot be heard from. */
   switchOn: boolean
+  /** Off only because the user switched protection off. The dashboard shows no status word
+   *  since its redesign, so it warns in words for every other reason the status is off. */
+  byUser: boolean
 }
 
 /** The overlay states in which it is drawing a smoothed copy, fully or fading. Armed and
@@ -31,10 +34,11 @@ const SMOOTHING_STATES: ReadonlySet<string> = new Set(['active', 'release', 'arm
 /** The kill switch as a person types it: Ctrl+Alt+Shift+C. */
 export const KILL_SWITCH_LABEL = KILL_SWITCH_ACCELERATOR.replace('Control', 'Ctrl')
 
-const off = (detail: string, switchOn: boolean): StatusView => ({
+const off = (detail: string, switchOn: boolean, byUser = false): StatusView => ({
   status: 'off',
   detail,
-  switchOn
+  switchOn,
+  byUser
 })
 
 /**
@@ -45,11 +49,17 @@ export function deriveStatus(beat: StatusBeat | null, beatAgeMs: number): Status
   if (beat === null) return off('Starting up', false)
   if (!(beatAgeMs <= WATCHDOG_MS)) return off('The overlay stopped responding', false)
   if (beat.state === 'off') return off(beat.offReason ?? 'Detection failed', false)
-  if (beat.state === 'disabled') return off(beat.offReason ?? 'Switched off', false)
+  if (beat.state === 'disabled') {
+    return off(beat.offReason ?? 'Switched off', false, beat.offByUser)
+  }
   // Main hides the overlay first and tells the renderer after, so for a moment the
   // renderer can still report a running state over a hidden overlay.
   if (!beat.overlayVisible) {
-    return off(beat.offReason ?? 'The overlay is hidden', beat.offReason === null)
+    return off(
+      beat.offReason ?? 'The overlay is hidden',
+      beat.offReason === null,
+      beat.offReason !== null && beat.offByUser
+    )
   }
   if (!beat.captureLive) return off('Screen capture stopped', true)
   if (beat.frameAgeMs === null) return off('Waiting for the first frame', true)
@@ -60,10 +70,16 @@ export function deriveStatus(beat: StatusBeat | null, beatAgeMs: number): Status
     return {
       status: 'smoothing',
       detail: 'Flashing found. You see a smoothed copy',
-      switchOn: true
+      switchOn: true,
+      byUser: false
     }
   }
-  return { status: 'protected', detail: 'Watching the whole screen', switchOn: true }
+  return {
+    status: 'protected',
+    detail: 'Watching the whole screen',
+    switchOn: true,
+    byUser: false
+  }
 }
 
 /** The status as a word or two: what the dashboard, the tray and the logs print. */

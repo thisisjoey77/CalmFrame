@@ -4,6 +4,7 @@
  */
 
 import {
+  CORRECTION_EPSILON,
   GRID_COLS,
   GRID_ROWS,
   LUMA_B,
@@ -157,5 +158,96 @@ void main() {
   lin = mix(lin, vec3(dot(lin, LUMA)), u_desat);
   vec3 c = linearToSrgb(clamp(lin, 0.0, 1.0));
   o_color = vec4(c * u_opacity, u_opacity);
+}
+`
+
+/**
+ * Correction pass, targets: each cell's target is the running average of its own mean,
+ * T += alpha (G - T). The smoothing filter of Pass B, run on the 96x54 grid instead of on
+ * the pixels ("Stretch: correct brightness per region"). Alpha 1 seeds the targets.
+ *
+ * Drawn into a GRID_COLS x GRID_ROWS float target, one fragment per cell, reading Pass A's
+ * grid and the previous targets at the same texel, so the targets keep the grid's layout.
+ */
+export const TARGET_FS = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+uniform sampler2D u_grid;
+uniform sampler2D u_prev;
+uniform float u_alpha;
+out vec4 o_target;
+
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec3 g = texelFetch(u_grid, p, 0).rgb;
+  vec3 t = texelFetch(u_prev, p, 0).rgb;
+  o_target = vec4(t + u_alpha * (g - t), 1.0);
+}
+`
+
+/**
+ * Correction pass, picture: the current frame with each region's brightness scaled to its
+ * target, then dimmed, desaturated and re-encoded exactly as Pass C does. The CPU twin is
+ * correctImage in src/core/regionCorrect.ts.
+ *
+ * A pixel's region mean and target are interpolated between the four nearest cell centres
+ * by hand with texelFetch, so no float-filtering extension is needed. Per channel, a region
+ * brighter than its target is scaled toward black and one darker toward white; both keep
+ * the result inside 0..1.
+ *
+ * The frame, its grid and the targets all keep row 0 at the top of the image, while a
+ * framebuffer's row 0 is at the bottom, so rows are flipped here, as in Pass C.
+ */
+export const CORRECT_FS = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+uniform sampler2D u_src;
+uniform sampler2D u_grid;
+uniform sampler2D u_goal;
+uniform vec2 u_target;
+uniform float u_dim;
+uniform float u_opacity;
+uniform float u_desat;
+out vec4 o_color;
+
+const vec2 GRID = vec2(${float(GRID_COLS)}, ${float(GRID_ROWS)});
+const vec3 LUMA = vec3(${float(LUMA_R)}, ${float(LUMA_G)}, ${float(LUMA_B)});
+const float EPS = ${float(CORRECTION_EPSILON)};
+
+${SRGB_TO_LINEAR}
+${LINEAR_TO_SRGB}
+vec3 between(sampler2D cells, ivec2 c, vec2 f) {
+  vec3 top = mix(texelFetch(cells, c, 0).rgb, texelFetch(cells, c + ivec2(1, 0), 0).rgb, f.x);
+  vec3 bottom =
+    mix(texelFetch(cells, c + ivec2(0, 1), 0).rgb, texelFetch(cells, c + ivec2(1, 1), 0).rgb, f.x);
+  return mix(top, bottom, f.y);
+}
+
+void main() {
+  ivec2 size = textureSize(u_src, 0);
+  ivec2 p = ivec2(gl_FragCoord.xy * vec2(size) / u_target);
+  p.y = size.y - 1 - p.y;
+  vec3 x = srgbToLinear(texelFetch(u_src, p, 0).rgb);
+
+  // Where the pixel centre sits between cell centres, clamped at the edges of the grid.
+  vec2 g = clamp((vec2(p) + 0.5) / vec2(size) * GRID - 0.5, vec2(0.0), GRID - 1.0);
+  ivec2 c = min(ivec2(floor(g)), ivec2(GRID) - 2);
+  vec2 f = g - vec2(c);
+  vec3 mean = between(u_grid, c, f);
+  vec3 goal = between(u_goal, c, f);
+
+  vec3 down = mix(goal, x * goal / max(mean, EPS), vec3(greaterThan(mean, vec3(EPS))));
+  vec3 room = 1.0 - mean;
+  vec3 up =
+    mix(goal, 1.0 - (1.0 - x) * (1.0 - goal) / max(room, EPS), vec3(greaterThan(room, vec3(EPS))));
+  vec3 lin = u_dim * mix(up, down, vec3(greaterThanEqual(mean, goal)));
+
+  lin = mix(lin, vec3(dot(lin, LUMA)), u_desat);
+  vec3 col = linearToSrgb(clamp(lin, 0.0, 1.0));
+  o_color = vec4(col * u_opacity, u_opacity);
 }
 `

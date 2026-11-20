@@ -25,6 +25,10 @@ export interface GraphOptions {
   fontPx?: number
   /** Width of the series line in CSS pixels. Default 1.5. */
   lineWidth?: number
+  /** Numbers on the y axis and the time labels under it. Default true. The dashboard turns
+   *  them off (its redesign, Sat Nov 14) and shows the latest value as a number instead;
+   *  the limit line keeps its label either way. */
+  axisLabels?: boolean
 }
 
 const COLORS = {
@@ -41,6 +45,9 @@ export class ScrollingGraph {
   private readonly ctx: CanvasRenderingContext2D
   private readonly fontPx: number
   private readonly lineWidth: number
+  private readonly axisLabels: boolean
+  /** Where the limit line is drawn, in flashes per second. */
+  private limit = GRAPH_LIMIT_FLASHES_PER_SEC
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -51,6 +58,12 @@ export class ScrollingGraph {
     this.ctx = ctx
     this.fontPx = options.fontPx ?? 10
     this.lineWidth = options.lineWidth ?? 1.5
+    this.axisLabels = options.axisLabels ?? true
+  }
+
+  /** Move the limit line: the flash limit in force (3 unless raised for testing). */
+  setLimit(flashesPerSec: number): void {
+    this.limit = flashesPerSec
   }
 
   /** Add a sample at capture time tMs and drop the ones that scrolled off. */
@@ -78,7 +91,10 @@ export class ScrollingGraph {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     const font = this.fontPx
-    const pad = { left: font * 3, right: 8, top: 8, bottom: font + 8 }
+    const labels = this.axisLabels
+    const pad = labels
+      ? { left: font * 3, right: 8, top: 8, bottom: font + 8 }
+      : { left: 8, right: 8, top: 8, bottom: 6 }
     const w = cssW - pad.left - pad.right
     const h = cssH - pad.top - pad.bottom
     const peak = this.samples.reduce((m, s) => Math.max(m, s.value), 0)
@@ -94,18 +110,20 @@ export class ScrollingGraph {
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'right'
     ctx.lineWidth = 1
-    for (const v of [0, yMax / 2, yMax]) {
+    // Without axis labels, only the baseline: the limit line is the one that matters.
+    for (const v of labels ? [0, yMax / 2, yMax] : [0]) {
       ctx.strokeStyle = COLORS.grid
       ctx.beginPath()
       ctx.moveTo(pad.left, Math.round(y(v)) + 0.5)
       ctx.lineTo(pad.left + w, Math.round(y(v)) + 0.5)
       ctx.stroke()
+      if (!labels) continue
       ctx.fillStyle = COLORS.label
       ctx.fillText(String(v), pad.left - 6, y(v))
     }
 
     // The limit: more than 3 flashes per second over a hazardous area.
-    const limitY = y(GRAPH_LIMIT_FLASHES_PER_SEC)
+    const limitY = y(this.limit)
     ctx.strokeStyle = COLORS.limit
     ctx.lineWidth = Math.max(1, this.lineWidth - 0.5)
     ctx.setLineDash([6, 4])
@@ -116,13 +134,15 @@ export class ScrollingGraph {
     ctx.setLineDash([])
     ctx.fillStyle = COLORS.limit
     ctx.textAlign = 'left'
-    ctx.fillText(`limit ${GRAPH_LIMIT_FLASHES_PER_SEC}/s`, pad.left + 4, limitY - font * 0.8)
+    ctx.fillText(`limit ${this.limit}/s`, pad.left + 4, limitY - font * 0.8)
 
-    ctx.fillStyle = COLORS.label
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText(`-${windowMs / 1000} s`, pad.left, cssH - 4)
-    ctx.textAlign = 'right'
-    ctx.fillText('now', pad.left + w, cssH - 4)
+    if (labels) {
+      ctx.fillStyle = COLORS.label
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillText(`-${windowMs / 1000} s`, pad.left, cssH - 4)
+      ctx.textAlign = 'right'
+      ctx.fillText('now', pad.left + w, cssH - 4)
+    }
 
     // The series, one segment at a time so hazard stretches take their own colour, clipped
     // to the plot so the segment scrolling off the left edge doesn't cover the labels.

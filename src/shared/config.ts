@@ -28,8 +28,23 @@ export const RED_THRESHOLD = 20
 /** Saturated red: R / (R + G + B) at or above this in at least one state. Step 3. */
 export const RED_RATIO = 0.8
 
+/** The flash-rate limit, in flashes per second: WCAG's "no more than three flashes within
+ *  any one-second period". The fast-transition interval, the strict trigger's count and the
+ *  graph's limit line all follow from it. Step 7. */
+export const DEFAULT_FLASH_LIMIT = 3
+/** The dashboard's flash-limit slider, a testing control: whole numbers from the standard's
+ *  3 up to this. Above 3, CalmFrame lets through flashing that the standard counts as a
+ *  hazard, so the limit is never saved: it is back at 3 at every launch. Step 7. */
+export const FLASH_LIMIT_MIN = DEFAULT_FLASH_LIMIT
+export const FLASH_LIMIT_MAX = 10
+
 /** Max gap between transitions for them to extend a streak (1/6 s, rounded). Step 5. */
 export const FAST_TRANSITION_INTERVAL_MS = 167
+/** The same for any flash limit: more than `flashLimit` flashes a second means less than
+ *  1 / (2 x flashLimit) s between transitions. 167 ms at the standard's 3. Step 5. */
+export function fastTransitionIntervalMs(flashLimit: number): number {
+  return Math.ceil(1000 / (2 * flashLimit))
+}
 /** Window over which a cell's transition count c is taken. Step 5. */
 export const COUNT_WINDOW_MS = 1000
 
@@ -157,6 +172,11 @@ export const EXTENDED_FAIL_RING_CAPACITY = 1024
 
 /** Strict trigger: a cell is hot when its 1 s count c reaches this. Step 7. */
 export const STRICT_TRIGGER_COUNT = 7
+/** The same for any flash limit: more than `flashLimit` flashes in a second is more than
+ *  2 x flashLimit transitions. 7 at the standard's 3. Step 7. */
+export function strictTriggerCount(flashLimit: number): number {
+  return 2 * flashLimit + 1
+}
 /** Sensitivity slider steps for N; the step after the last is strict mode. Step 7. */
 export const SENSITIVITY_STREAK_STEPS: readonly number[] = [2, 3, 4]
 
@@ -175,13 +195,10 @@ export type AreaMode = 'wcag' | 'calibrated' | 'iris'
 export const DEFAULT_AREA_MODE: AreaMode = 'wcag'
 
 /** Flashes-per-second limit line drawn on the hazard graph. Step 8. */
-export const GRAPH_LIMIT_FLASHES_PER_SEC = 3
+export const GRAPH_LIMIT_FLASHES_PER_SEC = DEFAULT_FLASH_LIMIT
 
 /** Blend toward grey applied to the output during a red hazard. "Red flashes". */
 export const RED_DESATURATION = 0.5
-
-/** Warn in the dashboard when capture falls below this rate. "Known behaviour at the edges". */
-export const LOW_FPS_WARNING = 45
 
 /** Send stats and the grid thumbnail to the dashboard every N frames. "The per-frame loop". */
 export const STATS_EVERY_N_FRAMES = 3
@@ -284,26 +301,24 @@ export const THUMBNAIL_MAX_SCREEN_FRACTION = 1 / 8
  *  value within one 8-bit code of the exact formula. */
 export const THUMBNAIL_LUT_SIZE = 4096
 
-/** Flash events (the dashboard's log and counter): hazards closer together than this are
+/** Flash events (main's log; the dashboard showed them until its redesign): hazards closer together than this are
  *  one event. It is how long the overlay stays up after the last hazard frame (the hold
  *  plus the fade), so with protection on, one event is one smoothing episode. */
 export const FLASH_EVENT_MERGE_MS = HOLD_MS + FADE_MS
 /** Per-frame frequency estimates kept for an event. Its frequency is their median, because
  *  the estimate is inflated at the edges of a burst (Phase 3 results). */
 export const FLASH_EVENT_FREQUENCY_SAMPLES = 600
-/** Event log lines kept in the dashboard. */
-export const EVENT_LOG_MAX = 200
 
-/** The low capture-rate warning stays up this long after the last reading under
- *  LOW_FPS_WARNING, so a rate hovering around the line does not make it come and go. */
-export const LOW_FPS_WARNING_HOLD_MS = 5000
-
-/** Dashboard window size in DIP, its smallest size, and its distance from the edges of the
- *  work area when placed for the first time (top right). */
-export const DASHBOARD_WIDTH = 460
-export const DASHBOARD_HEIGHT = 820
-export const DASHBOARD_MIN_WIDTH = 380
-export const DASHBOARD_MIN_HEIGHT = 420
+/** The dashboard is a small frameless panel (redesigned Sat Nov 14, afternoon). Its width in
+ *  DIP is fixed. Its height follows its content: the page measures itself and main fits the
+ *  window to it, so this height is only the first guess before the page has laid out. */
+export const DASHBOARD_WIDTH = 360
+export const DASHBOARD_HEIGHT = 380
+/** Saved bounds smaller than this are not a real panel (a damaged settings file), and a
+ *  height the page reports is never fitted below DASHBOARD_MIN_HEIGHT. */
+export const DASHBOARD_MIN_WIDTH = 200
+export const DASHBOARD_MIN_HEIGHT = 120
+/** Distance from the edges of the work area when placed for the first time (top right). */
 export const DASHBOARD_MARGIN = 16
 /** Dashboard graph: time span shown, and the smallest top of its y axis. */
 export const DASHBOARD_GRAPH_WINDOW_MS = 30000
@@ -401,6 +416,32 @@ export const VALIDATE_CLIP_CRF = 4
 export const VALIDATE_SECOND_MS = 1000
 
 // ---------------------------------------------------------------------------
+// Stretch: per-region brightness correction (trail #10)
+// ---------------------------------------------------------------------------
+
+/**
+ * How the overlay calms a hazard ("Mitigation math").
+ * - 'smooth': each pixel is averaged with its own past (Passes B and C). The method as
+ *   first specified. The tray's "Keep motion sharp" unticked, and the fallback whenever
+ *   the correction pass fails its startup check.
+ * - 'correct': the current frame is shown, with each region's brightness scaled to that
+ *   region's running average ("Stretch: correct brightness per region"). Motion stays
+ *   sharp. Experimental, the tray menu's "Keep motion sharp", and the default since the
+ *   user asked for it (Sat Nov 14, afternoon).
+ */
+export type MitigationMethod = 'smooth' | 'correct'
+export const DEFAULT_MITIGATION_METHOD: MitigationMethod = 'correct'
+/** A region whose mean is within this of black has nothing to scale down, and one within
+ *  this of white has nothing to scale up: its pixels take the target value itself. */
+export const CORRECTION_EPSILON = 1e-4
+/** Startup self-test of the correction pass: a generated image of this size (2.5 pixels
+ *  per cell, so cells hold a fractional number of pixels) is corrected on the GPU, and
+ *  each output byte must be within the tolerance, in 8-bit codes, of the CPU twin. */
+export const CORRECT_SELF_TEST_WIDTH = 240
+export const CORRECT_SELF_TEST_HEIGHT = 135
+export const CORRECT_SELF_TEST_TOLERANCE = 1
+
+// ---------------------------------------------------------------------------
 // Stretch: native screen capture (native/capture, trail #9)
 // ---------------------------------------------------------------------------
 
@@ -413,3 +454,95 @@ export const NATIVE_CAPTURE_ENV = 'CALMFRAME_NATIVE_CAPTURE'
  *  smoothing filter keep sampling at a steady rate, as with Chromium's capture. Just over
  *  one 60 Hz frame (16.7 ms), so a screen that changes every frame gets no repeats. */
 export const NATIVE_CAPTURE_REPEAT_MS = 20
+
+// ---------------------------------------------------------------------------
+// Demo footage: the offline render (tools/validate/render.ts)
+// ---------------------------------------------------------------------------
+
+/** Size of the video the offline render writes. Screen recorders cannot see the overlay, so
+ *  the demo's clean comparison is rendered from a video file ("One gotcha to plan around"). */
+export const RENDER_WIDTH = 1920
+export const RENDER_HEIGHT = 1080
+/** The render shows the overlay's picture this many frames late, as the live app does: a
+ *  frame is captured, analysed and drawn before it can reach the screen. One frame is the
+ *  measured capture-to-drawn time at 60 fps (14 ms median, "Native capture"), and leaves
+ *  out the compositor and the display, so it does not flatter the app. */
+export const RENDER_DEFAULT_DELAY_FRAMES = 1
+export const RENDER_MAX_DELAY_FRAMES = 6
+/** The render keeps the source's frame rate up to this, the app's capture rate. */
+export const RENDER_MAX_FPS = CAPTURE_FPS
+/** Frame rate used when the source's cannot be read. */
+export const RENDER_FALLBACK_FPS = 30
+/** x264 quality of the rendered video: visually lossless for screen content. */
+export const RENDER_CRF = 16
+/** Time span of the render's flashes-per-second graph. */
+export const RENDER_GRAPH_WINDOW_MS = 10000
+
+// ---------------------------------------------------------------------------
+// Game mode (experimental; the offline render only so far)
+// ---------------------------------------------------------------------------
+
+/** Game mode steadies brightness in zones this many across and down, each 6x6 cells of the
+ *  analysis grid. Tried offline on Geometry Dash recordings (Sat Nov 14): 32x18 and 16x9
+ *  calmed the flashing as well as the full grid and kept more of the picture, and 8x5 let
+ *  flashing through. Spec: "Game mode (experimental)". */
+export const GAME_ZONE_COLS = 16
+export const GAME_ZONE_ROWS = 9
+/** A zone's target rises at this share of the smoothing filter's alpha (it drops at once).
+ *  Half, because a one-sided target leaves about twice the swing of the two-sided average
+ *  for the same alpha. */
+export const GAME_RISE_FACTOR = 0.5
+
+// ---------------------------------------------------------------------------
+// Game mode, second method: hold the usual look (experimental; the offline render only)
+// ---------------------------------------------------------------------------
+
+/** The scene grid is this many cells across the picture: 16 px cells in the render's large
+ *  pane, 24 px at 1920. Its targets are attached to the scrolling scene. Spec: "Game mode:
+ *  hold the usual look". */
+export const GAME_HOLD_CELLS_ACROSS = 80
+/** A cell is off its target when its furthest channel differs by more than this (linear). */
+export const GAME_HOLD_TOLERANCE = 0.02
+/** A target holds still while its cell has been off it, in one direction, for no longer
+ *  than this. A hazardous flash reverses within FAST_TRANSITION_INTERVAL_MS (167 ms), so
+ *  anything that has lasted longer is the scene changing, and the target follows it. */
+export const GAME_HOLD_MS = 180
+/** Time constant of that catch-up: about 0.3 of the way per frame at 60 fps. */
+export const GAME_HOLD_CATCH_UP_MS = 47
+/** A cell is corrected only when the change is shared: when cells off their targets in the
+ *  same direction fill this share of the surrounding area window. The correction fades in
+ *  from START to FULL, both well under the detector's AREA_LIMIT, so anything the detector
+ *  could count is corrected in full, and a lone mover (the player) is left alone. */
+export const GAME_HOLD_SHARED_START = 0.06
+export const GAME_HOLD_SHARED_FULL = 0.12
+/** How far off its target a cell must be to count toward that share: not at all at START,
+ *  fully at FULL (linear). */
+export const GAME_HOLD_OFF_START = 0.02
+export const GAME_HOLD_OFF_FULL = 0.06
+/** A cell that changed on its own is remembered as a mover for about this long, so that in
+ *  a flash frame it is re-lit with its surroundings, not flattened into the background. */
+export const GAME_HOLD_MOVER_MEMORY_MS = 100
+/** A mover takes the mean and target of the cells within this many cells of it that are
+ *  not movers themselves. */
+export const GAME_HOLD_MOVER_RADIUS = 4
+
+/** The scroll estimator's distances are given for a picture this wide and scale with the
+ *  picture. It measures how far the picture's content moved since the last frame, from edge
+ *  positions, which a flash does not move. */
+export const SCROLL_REFERENCE_WIDTH = 640
+/** Largest scroll per frame the first, coarse step looks for, in pixels at the reference
+ *  width: 32 is 5,760 px/s at 1920 wide and 60 fps. */
+export const SCROLL_MAX_X = 32
+export const SCROLL_MAX_Y = 12
+/** The coarse step compares edge profiles in this many horizontal and vertical bands. */
+export const SCROLL_BANDS_X = 6
+export const SCROLL_BANDS_Y = 8
+/** The fine step compares edge pictures on every SCROLL_STRIDE-th pixel, leaving out a
+ *  margin of SCROLL_MARGIN pixels, and climbs at most SCROLL_CLIMB_STEPS from each start. */
+export const SCROLL_STRIDE = 2
+export const SCROLL_MARGIN = 40
+export const SCROLL_CLIMB_STEPS = 6
+/** Below this correlation the fine step's answer is not trusted (a blank frame, a cut), and
+ *  the scroll is taken to be the median of the last SCROLL_HISTORY trusted answers. */
+export const SCROLL_MIN_CORRELATION = 0.35
+export const SCROLL_HISTORY = 9

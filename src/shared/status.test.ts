@@ -10,6 +10,7 @@ const healthy: StatusBeat = {
   captureLive: true,
   overlayVisible: true,
   offReason: null,
+  offByUser: false,
   ageMs: 0
 }
 const beat = (patch: Partial<StatusBeat>): StatusBeat => ({ ...healthy, ...patch })
@@ -57,10 +58,42 @@ describe('protection status (Phase 5): derived from the heartbeat, never wrong',
   it('reads off when switched off, with the switch shown off', () => {
     const reason = `Switched off with ${KILL_SWITCH_LABEL}`
     const v = deriveStatus(
-      beat({ state: 'disabled', overlayVisible: false, offReason: reason }),
+      beat({ state: 'disabled', overlayVisible: false, offReason: reason, offByUser: true }),
       50
     )
-    expect(v).toEqual({ status: 'off', detail: reason, switchOn: false })
+    expect(v).toEqual({ status: 'off', detail: reason, switchOn: false, byUser: true })
+  })
+
+  it('says off was the user only when the user switched it off (the dashboard warns otherwise)', () => {
+    const disabled = { state: 'disabled', overlayVisible: false } as const
+    // The user: the switch, the tray menu or the kill switch.
+    expect(
+      deriveStatus(
+        beat({ ...disabled, offReason: 'Switched off from the dashboard', offByUser: true }),
+        50
+      ).byUser
+    ).toBe(true)
+    // Main hid the overlay at the user's request before the renderer heard.
+    expect(
+      deriveStatus(beat({ overlayVisible: false, offReason: 'Switched off', offByUser: true }), 50)
+        .byUser
+    ).toBe(true)
+    // Failures that main turns into Disabled: the watchdog, a capture or pipeline error.
+    const failed = 'The overlay stopped responding (no heartbeat for 760 ms)'
+    expect(deriveStatus(beat({ ...disabled, offReason: failed }), 50).byUser).toBe(false)
+    // Every other way to be off is never the user's, whatever the last beat said.
+    const offByUser = true
+    expect(deriveStatus(null, 0).byUser).toBe(false)
+    expect(deriveStatus(beat({ ...disabled, offByUser }), WATCHDOG_MS + 1).byUser).toBe(false)
+    expect(deriveStatus(beat({ state: 'off', offReason: 'Detection failed: x' }), 50).byUser).toBe(
+      false
+    )
+    expect(deriveStatus(beat({ overlayVisible: false }), 50).byUser).toBe(false)
+    expect(deriveStatus(beat({ captureLive: false }), 50).byUser).toBe(false)
+    expect(deriveStatus(beat({ frameAgeMs: FRAME_STALE_MS + 1 }), 50).byUser).toBe(false)
+    // And never while it is on.
+    expect(deriveStatus(healthy, 50).byUser).toBe(false)
+    expect(deriveStatus(beat({ state: 'active' }), 50).byUser).toBe(false)
   })
 
   it('reads off as soon as main hides the overlay, before the renderer has heard', () => {

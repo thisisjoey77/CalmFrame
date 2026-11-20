@@ -14,10 +14,17 @@ import {
   HEARTBEAT_MS,
   STATS_EVERY_N_FRAMES
 } from '../shared/config'
-import type { CaptureSize, InitInfo, NativeFrameMeta } from '../shared/messages'
+import type {
+  CaptureSize,
+  CorrectSelfTestResult,
+  InitInfo,
+  NativeFrameMeta
+} from '../shared/messages'
 import { DEFAULT_SETTINGS, detectorOptionsFor, type Settings } from '../shared/settings'
 import { LiveAnalysis } from './analysis'
 import { openScreenStream } from './capture'
+import { CorrectPass } from './correctPass'
+import { runCorrectSelfTest } from './correctSelfTest'
 import { GridPass, type FrameImage } from './gridPass'
 import { runGridSelfTest } from './gridSelfTest'
 import { runSelfCheck } from './selfCheck'
@@ -305,6 +312,8 @@ function startAnalysis(settings: Settings): void {
   console.log(
     `[smooth self-test] ${(performance.now() - t1).toFixed(0)} ms: ${smoothResult.detail}`
   )
+  const correction = smoothResult.pass ? startCorrection(gl, pass) : null
+  if (correction) smoothResult.correction = correction.result
   api.sendSmoothSelfTest(smoothResult)
   if (!smoothResult.pass) throw new Error(`smoothing self-test failed: ${smoothResult.detail}`)
 
@@ -322,8 +331,34 @@ function startAnalysis(settings: Settings): void {
       },
       failed: pipelineFailed
     },
-    detectorOptionsFor(settings)
+    detectorOptionsFor(settings),
+    correction && correction.result.pass ? correction.pass : null
   )
+  analysis.setMitigation(settings.mitigation)
+}
+
+/**
+ * The experimental correction pass ("Keep motion sharp", trail #10) and its startup check
+ * against the CPU twin. Nothing here may stop protection: if the pass cannot be built or
+ * does not match, the result says so and the smoothing filter draws every hazard.
+ */
+function startCorrection(
+  gl: WebGL2RenderingContext,
+  pass: GridPass
+): { pass: CorrectPass | null; result: CorrectSelfTestResult } {
+  try {
+    const correct = new CorrectPass(gl, pass.source, pass.gridTexture)
+    const t0 = performance.now()
+    const result = runCorrectSelfTest(gl, pass, correct)
+    console.log(`[correct self-test] ${(performance.now() - t0).toFixed(0)} ms: ${result.detail}`)
+    return { pass: correct, result }
+  } catch (error) {
+    // Leave no WebGL error behind for the passes that follow.
+    while (gl.getError() !== gl.NO_ERROR);
+    const detail = `correction pass could not start: ${String(error)}`
+    console.error(`[correct self-test] ${detail}`)
+    return { pass: null, result: { pass: false, maxDiff: NaN, detail } }
+  }
 }
 
 /** The user's settings and the capture choice, from main. If main cannot be asked, the
@@ -365,7 +400,10 @@ async function start(): Promise<void> {
   startHeartbeat()
   api.onProtection((enabled, reason) => analysis?.setEnabled(enabled, reason))
   api.onDebugFreeze(freeze)
-  api.onSettings((settings) => analysis?.configure(detectorOptionsFor(settings)))
+  api.onSettings((settings) => {
+    analysis?.configure(detectorOptionsFor(settings))
+    analysis?.setMitigation(settings.mitigation)
+  })
   const init = await loadInit()
   try {
     startAnalysis(init.settings)

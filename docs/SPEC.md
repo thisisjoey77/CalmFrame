@@ -191,6 +191,22 @@ A 60 Hz display can only show strobes at 30/n Hz: 30, 15, 10, 7.5, 6, 5 and so o
 
 These are predictions. Your slow-motion measurement replaces them. The table also shows why trigger choice beats raw latency: going from strict to early saves two flashes, while shaving 25 ms saves a quarter of one.
 
+#### The flash limit (a testing control)
+
+Added Sat Nov 14 at the user's request, to see how real content behaves at a looser limit. Everything above is written for the standard's limit of 3 flashes a second. The limit is now a detector option, `flashLimit`, and two numbers follow from it:
+
+- the fast-transition interval of Step 5: 1 / (2 × limit) s, rounded up to a whole millisecond, so 167 ms at 3, 100 ms at 5 and 72 ms at 7
+- the strict trigger's count: 2 × limit + 1, so 7 at 3, 11 at 5 and 15 at 7
+
+The early trigger still counts N fast transitions, and the area rule, the contrast rules and Step 5a are untouched. The dashboard has a "Flash limit" slider from 3 to 10 ("Flash limit (for testing)" until the dashboard's redesign), and the graph's limit line follows it.
+
+**Above 3, CalmFrame no longer implements the WCAG threshold:** flashing between 3 and the limit is let through. So:
+
+- the default is 3. Until the dashboard's redesign (Sat Nov 14, afternoon) it said in plain words when the limit was not 3. The user dropped that warning: the slider now shows only the number, with "(WCAG)" at 3 alone, since calling a higher limit WCAG's would be false
+- the limit is never restored from the settings file, so it is back at 3 at every launch, for the same reason protection always starts on
+- the viewer check keeps measuring what the viewer sees against the standard's 3
+- never demo, measure or quote results with the limit raised without saying so
+
 ### Step 7a: pre-arm (optional, off by default)
 
 The early trigger fires on the third fast reversal, so the first two reach the viewer at
@@ -294,8 +310,9 @@ ignores them behaves exactly as it did before pre-arm existed.
 - **Scene cuts** produce one transition and never trigger. A cut to white and back produces two and does not trigger at N = 3.
 - **Lightning or gunfire** with two quick double-flashes can trigger early mode. That is the accepted false positive of a safety default.
 - **Scrolling and dragging** make cells reverse, but one after another and both ways at once, so Step 5a does not count them. A window repainted three times in a row (a tab switch) still triggers early mode at N = 3.
-- **Capture rate** bounds what you can see. At 60 fps capture you resolve up to 30 Hz. Below 45 fps, show a warning in the dashboard.
+- **Capture rate** bounds what you can see. At 60 fps capture you resolve up to 30 Hz. Phase 5 showed a warning in the dashboard below 45 fps; the dashboard's redesign removed it at the user's request, and main still logs the rate every few seconds.
 - **Frame gaps** over 250 ms reset all streaks, so a stall cannot fake a fast sequence.
+- **Exactly at the limit** can go either way. A strobe at exactly 3.0 Hz on evenly timed frames briefly holds a count of 7, not the 6 of Step 5, because the transition that is one second old lands a rounding error inside the window. So the strict trigger fires on it. It errs toward protecting, and real capture timestamps jitter by more than that anyway.
 - **Static spatial patterns** (stripes) are a separate hazard that IRIS detects and this spec does not. List it under future work.
 
 ## Mitigation math
@@ -392,6 +409,119 @@ The 1.5 s hold is longer than the 1 s counting window, so the detector has fully
 
 Use the detector's hot mask, grown by two cells and blurred, as the overlay's opacity. Everything outside the mask stays live and sharp. Build it only after whole-screen smoothing is measured and working.
 
+Not built. An offline test of a close relative (smooth each pixel only as far as its region's mean is away from its running average) kept barely more detail than plain smoothing on an action clip, 0.54 against 0.51, because large flashes and large movement both cover most of the picture. See the next section for the numbers.
+
+### Stretch: correct brightness per region (experimental, trail #10)
+
+Added Sat Nov 14 as the one stretch, at the user's request and before the gate. It is a second way to draw a hazard, behind the "Keep motion sharp" tick box (on the dashboard until its redesign, in the tray menu since). The smoothing filter above was the default until the user made this method the default in the dashboard's redesign (Sat Nov 14, afternoon); it stays the other choice and the fallback. Detection, the trigger, the state machine, α, d and the red desaturation are the same for both.
+
+The smoothing filter averages each pixel with its own past, so anything that moves leaves a trail. This method shows the current frame and changes only how bright each region is.
+
+- **Targets.** Each grid cell keeps a target T, the running average of its own mean G, per channel in linear light: T += α (G − T). It is the smoothing filter run on the 96×54 grid instead of on the pixels, with the same α, on every frame.
+- **Correction.** For each pixel, the region mean m and the target t are interpolated between the four nearest cell centres. Then, per channel:
+
+  ```latex
+  \text{out} = \begin{cases} x \cdot \dfrac{t}{m} & m \ge t \quad \text{(too bright: scale toward black)} \\[2mm] 1 - (1 - x)\,\dfrac{1 - t}{1 - m} & m < t \quad \text{(too dark: scale toward white)} \end{cases}
+  ```
+
+  Both are straight lines in x that send the region's mean to its target and keep the result inside 0 to 1, so nothing clips. A region already at its target is left exactly as it is. A plain gain alone could not lift a black phase, which is why the dark case scales toward white.
+- **Then as before:** multiply by d, desaturate for a red hazard, re-encode, draw at the state machine's opacity.
+
+**Same frame, no read-back.** The frame, its grid and the targets on the GPU always belong to one captured frame: Pass A uploads the frame and draws its grid, and the targets are updated at once, next to Pass B. A skipped frame skips all of them. A correction worked out from an older frame would let one full-contrast frame through at every reversal, which is still a flash.
+
+**What stays true.** At the scale of the grid, the output is the same as the smoothing filter's: each cell's mean lands on d · T, which is what the viewer check's grid twin already computes. So the viewer check, the residual number and the protected preview apply to both methods. They say nothing about what happens inside a cell.
+
+**What it gives up,** each pinned by a test in `src/core/regionCorrect.test.ts`:
+
+- **It steadies each region's mean, not each pixel.** Detail finer than a cell can still alternate. A one-pixel checkerboard that inverts passes through unchanged, as it does for the detector (Step 2). A cell is 20 px on the demo laptop, about 0.34° at 60 cm, while WCAG's exemption for fine balanced patterns stops at 0.1°.
+- **A hard edge keeps a flickering rim.** Where flashing content meets still content, a cell holds both and one correction cannot suit both. A rim about a cell wide on each side still swings by more than 0.10: the still side flickers in step with the flash, and the flashing side is only partly calmed. Two cells from the edge both are clean.
+
+**Offline test (Sat Nov 14).** Both methods were run through the real detector and state machine in a scratch prototype (not in the repo), on synthetic screens at 480×270 and 60 fps, and on a 2:37 anime battle clip at 640×360 and 30 fps on default settings. "Detail kept" is the correlation between the output's edges and the current frame's, where 1.0 is the current frame's own detail.
+
+| Test | Smoothing filter | Brightness correction |
+| --- | --- | --- |
+| Full-screen black and white strobe, leftover swing | 0.070 | 0.070 |
+| Hard-edged strobe patch on a still screen, pixels still swinging ≥ 0.10 | none | a rim: 0.39 of the WCAG area limit in one direction |
+| Clip: detail kept on the parts of the picture that change | 0.51 | 0.91 |
+| Clip: IRIS (Python port) on the output. The unmitigated clip fails, with 23 failing frames | passes, 14 warning frames | passes, 14 warning frames |
+| Clip: seconds our detector flags at the strict trigger. Unmitigated: 19 | 0 | 0 |
+
+A finer correction grid shrinks the rim (0.19 of the limit at 192×108) and keeps a little less detail (0.86). The app uses the detection grid, which is already on the GPU.
+
+**In the app.** `src/overlay/correctPass.ts` holds the targets in two 96×54 float textures and draws the corrected frame. A startup self-test checks it against the CPU twin: on the demo laptop the largest difference was 0.54 of an 8-bit code (limit 1). If the pass cannot start or fails that check, the tick box falls back to the smoothing filter and the dashboard says so. The targets are kept warm on every frame, whichever method draws, so ticking the box in the middle of a hazard switches cleanly.
+
+**Not yet checked on screen.** The numbers above are offline. How it looks at 1920×1080 and 60 fps, and how visible the rim is on real content, need the user's eyes: the low-contrast strobe page first, then real clips.
+
+### Game mode (experimental, the offline render only)
+
+Added Sat Nov 14, from tests on Geometry Dash recordings. In a fast side-scrolling game the smoothing filter is unplayable: it kept 37% of the picture's detail on one level. The brightness correction keeps the picture, but on a level flashing 11 times a second it washes everything out to pale grey, because it lifts dark frames toward white. Game mode is a third way to calm a hazard, built so far only into the offline render (`npm run render -- <video> --game-mode on`), so it can be judged on whole levels before anything is added to the app. `src/core/zoneDim.ts`.
+
+- **Big zones.** Brightness is steadied in 16×9 zones (6×6 grid cells each, about 120 px on the demo laptop), blended smoothly. The correction then changes slowly across the picture and draws no halo around every obstacle.
+- **Brightness only.** One factor scales red, green and blue together, so a pixel keeps its hue and its contrast against its neighbours.
+- **Dim, never whiten.** A zone's target follows its brightness down at once and up only at half the smoothing filter's α. So the target is never above what the zone is now: bright frames are dimmed to the level of the dark ones and nothing is lifted. Black stays black. Half α, because a target that only rises between dark frames leaves a swing of ΔL (1 − βⁿ), about twice what the two-sided average leaves.
+- **Always drawn.** The picture is drawn on every frame, hazard or not, with the safe-state α in between. The viewer's delay is then constant, where the other methods jump between the live screen and a late copy each time the overlay comes and goes. In a timing game a steady delay can be learned.
+
+Detection is unchanged: the same thresholds, sensitivity and flash limit decide when the hazard strength applies.
+
+**Offline results (Sat Nov 14, a scratch prototype, 640×360, default sensitivity unless noted).** "Detail kept" is the correlation between the output's edges and the current frame's. Flagged seconds are at the standard: the strict trigger and the limit of 3.
+
+| Level section | Original flagged | Smoothing | Brightness correction | 16×9 zones, meeting in the middle | Game mode |
+| --- | --- | --- | --- | --- | --- |
+| A hard level, 22 s, flashing up to 11 times a second: flagged seconds | 22 | 0 | 0 | 0 | 0 |
+| The same: detail kept | 1.0 | 0.37 | 0.86 | 0.94 | 0.92 |
+| The same: mean brightness, 0 to 255 | 108 | n/a | n/a | 117 | 48 |
+| A dark level, 30 s: flagged seconds | 15 | n/a | n/a | 0 | 0 |
+| The same: mean brightness | 63 | n/a | n/a | 83 | 30 |
+
+Zones of 32×18 did as well as 16×9. Zones of 8×5 let 2 of the 22 seconds through. Scaling by one factor in both directions, brightening as well as dimming, was the most colourful and left 9 of the 22 seconds flagged, so it was dropped.
+
+**What it gives up,** pinned by tests in `src/core/zoneDim.test.ts`:
+
+- **The picture is darker while the game flashes:** under half the original's brightness on both levels above. On an already dark level it is hard to see. A floor, or a setting partway toward meeting in the middle, would trade some haze for brightness. Neither is built or tested.
+- **A flash down to black takes the picture down to black.** Black cannot be dimmed and is never lifted.
+- **It steadies zones, not pixels.** A small flashing object is only partly calmed, less than with the brightness correction's small cells. The planned safety net, falling back to small cells when the viewer check still sees a hazard, is not built.
+- **Not in the app.** No GPU pass, no setting, no on-screen check. Whether a game is playable through it is unknown.
+
+A level that stays under the limit needs none of this. The official level Electrodynamix peaks at 2.5 flashes a second: the strict trigger never fires on it, and the default sensitivity fires in 3 of its 107 seconds.
+
+### Game mode: hold the usual look (experimental, the offline render only)
+
+Added Sat Nov 14, late afternoon, as a second game-mode method: `npm run render -- <video> --game-mode hold`. `--game-mode on` is still the dimming method above. The user compared the two on a Geometry Dash level in a scratch prototype, judged this one right, and asked for it in the render. `src/core/sceneHold.ts`, with `holdTarget.ts`, `sceneGrid.ts` and `scroll.ts`.
+
+Every earlier method steers each region toward a slow average of its brightness. During a flash that average sits between the dark and the bright frames, so every frame is changed, and the picture ends up hazy (when dark frames are lifted) or dark (when bright frames are dimmed). This method changes what the target is, and what it is attached to.
+
+- **Hold, then follow.** A region's target stays where it is while the region has been off it, in one direction, for no longer than 180 ms. In that time it moves by at most the smoothing target, 0.07. A hazardous flash reverses within 167 ms (Step 5), so through any flash the target moves by less than the flash threshold. Once a change has lasted longer than 180 ms it cannot be a hazardous flash: it is the level changing, and the target catches up with a 47 ms time constant. So the frames that look as the level usually does pass untouched, and only the odd frames out are pulled back. A strobe with equal halves keeps the state it started in.
+- **Targets attached to the scene.** The game scrolls at about 1,300 px/s, so a cell fixed to the screen sees the whole level go by, and holding its brightness still would flatten the level. The grid of targets moves with the picture instead: 80 cells across, each on one piece of the level for as long as that piece is on screen. A level that only scrolls then has every cell on its target and is left exactly as it is. Nothing is resampled as the grid moves: a cell's stored values are found from its place in the scene.
+- **The scroll is measured from edges.** `scroll.ts` finds how far the picture moved since the last frame by lining up where the edges are, first along each axis in a few bands, then on the whole edge picture around that answer and around the recent scroll. A flash changes brightness and leaves the edges where they were. When nothing lines up (a blank or washed-out frame), the scroll is taken to be the median of the last 9 trusted answers.
+- **Only a shared change is corrected.** A cell is corrected in full when cells off their targets the same way fill 12% of the surrounding area window (a third of the screen each way, as in Step 6), and not at all under 6%. Both are well under the detector's 25%. A cell that changes on its own, such as the player, is left alone. In a flash frame such a mover takes the correction of the cells near it that are not movers, so it is re-lit with the picture around it.
+- **A cell that scrolls into view** starts from its own mean, corrected as the known cells around it are: on its mean in a calm frame. If its first frame is a flash frame, that is only a guess, and the cell is measured again at the first calm frame.
+- **Dimming keeps the hue.** A region that is too bright is scaled by one factor for red, green and blue. A region that is too dark is lifted per channel, toward the remembered colour and not toward grey.
+- **Drawn all the time,** like the other game mode, and corrected only as much as the state machine's opacity: nothing while safe, in full during a hazard. Detection is unchanged.
+
+The current frame is always what is drawn, so nothing smears, and the method adds no delay of its own.
+
+**Results (Sat Nov 14).** "Ultra Violence" 0:00 to 0:20, through `npm run render` with default settings: the original is flagged in 5 of the 20 seconds at the standard (the strict trigger, the limit of 3), the protected picture in 0. With the app's default trigger: 12 and 2.
+
+A scratch prototype of an earlier version (640×360, not in the repo) was also run on four level sections. The version in the repo differs from it in how a cell's first target is found and in how a mover is re-lit, and of the four only "Ultra Violence" has been run with it. Brightness is the mean, 0 to 255.
+
+| Level section | Original | Dimming (game mode on) | Hold the usual look |
+| --- | --- | --- | --- |
+| Ultra Violence, 12 s: flagged seconds, brightness | 5, 54 | 0, 25 | 0, 50 |
+| Problematic, 30 s | 3, 32 | 0, 15 | 0, 24 |
+| Turbo Doofus Mode, 30 s | 15, 64 | 1, 28 | 0, 64 |
+| iSpyWithMyLittleEye, 22 s | 22, 109 | 10, 48 | 4, 105 |
+
+**What it gives up:**
+
+- **Corrected frames are coarser.** A corrected frame is re-lit in patches the size of a cell (16 px in the render's large pane, 24 px at 1920). Detail the flash frame itself lacks comes back only that coarsely, and bright things remembered from the calm frames show as soft patches. Pinned by a test.
+- **A real change of brightness arrives 180 ms late** while the overlay is on. Pinned by a test.
+- **A strobe between two different pictures still forces a choice.** One section of "Turbo Doofus Mode" flips between a red level and a black one. Holding the red look means lifting every black frame, which looks mushy; holding the black look is clean and darker. A rule that drops to the darker look when it keeps coming back was tried in the prototype (brightness 50 on that level, still 0 flagged) and is not built.
+- **Something fixed to the screen that flashes is treated as part of the scene** and comes out mushy. A second set of targets fixed to the screen would cover it. Not built.
+- **It needs the scroll.** On "iSpyWithMyLittleEye" the picture is too busy to follow and the method fails: 4 of 22 seconds still flagged.
+- **With "Ignore movement" off, the output is flagged as often as the original.** That setting counts the scrolling itself, calm sections included, so it says little about a side-scroller.
+- **Not in the app.** The live overlay would need the scroll measured on the same frame it corrects, a GPU pass for the scene grid, a setting and the user's on-screen check. Whether the scroll can be measured in time on the GPU is not known.
+- **Slow offline.** About 7 frames a second on the Windows laptop, so a 20 s clip takes 3 minutes.
+
 ## Architecture
 
 CalmFrame is one Electron app with three windows and one hot loop. All per-frame work lives in the overlay window's renderer, so no frame ever crosses a process boundary and adds latency.
@@ -406,7 +536,7 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 | --- | --- | --- |
 | Main process | Node | Creates windows and tray, grants screen capture to the overlay renderer, stores settings, relays messages, owns the kill switch and watchdog |
 | Overlay window | Renderer | Captures the screen, runs the GPU passes and the detector, draws the smoothed copy. Transparent, click-through, always on top, excluded from capture |
-| Dashboard window | Renderer | Hazard graph, raw thumbnail, event log, controls. Receives stats about 20 times a second. Always on top, above the overlay, and excluded from capture, so it stays sharp and live during a hazard (decided Sat Nov 14) |
+| Dashboard window | Renderer | A small panel since its redesign (Sat Nov 14, afternoon), in a normal window with a title bar: the protection switch, the flashes-per-second graph and its latest value, the sensitivity and flash-limit sliders, and a notice line only when something is wrong. Minimize puts it in the taskbar; close hides it to the tray. Receives stats about 20 times a second. Always on top, above the overlay, and excluded from capture, so it stays sharp and live during a hazard (decided Sat Nov 14) |
 | Detector core | Plain TypeScript, no Electron or DOM imports | Detection, filter-parameter math, overlay state machine. Shared by the app and the validator |
 | Strobe test page | Static page in a normal browser | Calibration source and safe demo clip |
 | Validator CLI | Node script | Decodes a video file, runs the detector core, compares with IRIS |
@@ -420,7 +550,9 @@ Read it clockwise from the screen: frames go in, the smoothed copy comes back ou
 5. Step the state machine. It returns α, d and overlay opacity.
 6. Pass B: fold the frame into the smoothing state in a half-float texture, every frame. It runs in the frame callback right after Pass A's read-back is fenced, so it uses the α decided on the previous frame, never delays the read-back, and draws only offscreen, so it presents nothing (Phase 4 results).
 7. Pass C: after each decision, and only while the opacity is above 0, draw d · S, re-encoded for display, at the current opacity. When the opacity reaches 0, clear the canvas once and draw nothing more until the next hazard.
-8. Every third frame, send stats and the 96×54 thumbnail to the dashboard.
+8. Every third frame, send stats to the dashboard. The 96×54 thumbnails go with them, but main drops them: nothing has shown them since the dashboard's redesign.
+
+With "Keep motion sharp" ticked (see "Stretch: correct brightness per region"), step 6 also folds the frame's grid into the per-cell targets, which it does on every frame anyway, and step 7 draws the corrected current frame instead of d · S.
 
 ### Overlay window requirements
 
@@ -443,7 +575,7 @@ These are the settings the plan depends on. Each is a documented Electron window
 
 - **Kill switch.** A global shortcut (Ctrl+Alt+Shift+C) moves to Disabled and hides the overlay at once.
 - **Watchdog.** The overlay sends a heartbeat every 250 ms. If the main process misses it for 750 ms, it hides the overlay window. A frozen opaque overlay would otherwise block the whole screen.
-- **Fails open, and says so.** Any failure shows the raw screen and flips the tray icon and dashboard to "Protection off". Never show "Protected" unless frames are flowing.
+- **Fails open, and says so.** Any failure shows the raw screen, flips the tray icon to "Protection off" and puts "Not protecting" and the reason on the dashboard (its notice line, since the redesign). Never show "Protected" unless frames are flowing.
 
 ### Defaults, in one place
 
@@ -455,11 +587,13 @@ These are the settings the plan depends on. Each is a documented Electron window
 | Fast-transition interval | 167 ms |
 | Counting window | 1.0 s |
 | Trigger | Early, N = 3 |
+| Flash limit | 3 flashes a second, the standard's. A testing slider can raise it to 10 until the next launch |
 | Concurrency rule | One-way: a quarter of a window reversing the same way in one frame, with at most 0.25 as many reversing the other way (Step 5a) |
 | Area limit, window | 0.25 of a window one third of the grid each way |
 | Target residual ρ | 0.07 (0.08 until Phase 4) |
 | α range, warm α | 0.03 to 0.30, 0.25 |
 | Minimum dim d | 0.4 |
+| Mitigation method | Brightness correction per region, "Keep motion sharp" (experimental, the default since Sat Nov 14 afternoon, at the user's request). The smoothing filter when it is unticked in the tray menu, or when the correction pass fails its startup check |
 | Hold, fade | 1.5 s, 0.75 s |
 | Heartbeat, watchdog | 250 ms, 750 ms |
 | Capture | 60 fps, full size with the native module; max 960×540 with Chromium's fallback (see Phase 0 results and "Native capture") |
@@ -478,13 +612,13 @@ Electron, TypeScript, Vite (the electron-vite template), WebGL2 for the GPU pass
   native/capture/      C++ screen capture module (Desktop Duplication into shared textures)
   src/main/            windows, tray, capture grant, native capture hand-over, settings, kill switch, watchdog
   src/preload/         contextBridge API between main and the renderers (from the template)
-  src/overlay/         capture, GPU pipeline, shaders, frame loop
-  src/dashboard/       graph, thumbnail, log, controls
+  src/overlay/         capture, GPU pipeline (grid, smoothing, brightness correction), shaders, frame loop
+  src/dashboard/       the panel: protection switch, graph, sliders, notice line
   src/debug/           the Phase 0 to 4 debug window, behind CALMFRAME_DEBUG_WINDOW=1
-  src/core/            luminance, tracker, area, detector, filter math, state machine, tests
+  src/core/            luminance, tracker, area, detector, filter math, brightness correction, state machine, tests
   src/shared/          message types, config defaults
   tools/strobe/        strobe test page
-  tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all)
+  tools/validate/      clip generator, validator CLI, IRIS comparison (npm run validate:all), offline render (npm run render)
   measurements/        slow-motion results, comparison tables
 ```
 
@@ -716,6 +850,7 @@ The dashboard replaces the debug window. It is plain TypeScript and canvas, one 
 - **Controls.**
   - The sensitivity slider has the positions N = 2, 3 (default), 4, then strict. Each shows the Step 7 prediction of flashes seen at 10 Hz and 75 ms (1.3, 1.8, 2.3, 3.8). It has no pre-arm position: the user decided at the start of this phase that pre-arm stays off.
   - "Ignore movement" is on by default. Unticked, it is the detector as first specified. The debug window's box drives the same setting.
+  - Added later the same day: the "Keep motion sharp (experimental)" tick box (trail #10, "Stretch: correct brightness per region") and the "Flash limit (for testing)" slider (Step 7, "The flash limit").
   - The on/off switch sits next to the status.
   - The tray icon has a different shape per status (a filled disc, a disc with a wave, a slashed ring), so it reads without colour. Its menu has the status, "Protection on", "Show dashboard" and "Quit CalmFrame".
   - Everything is a native control, so the page works from the keyboard: Tab, arrow keys, Space.
@@ -731,6 +866,32 @@ Decisions and deviations:
 - **One CalmFrame at a time.** At the start of this phase an earlier dev instance was still running, and capture fell to about 33 fps with two copies capturing. A second launch now shows the running copy's dashboard and exits.
 - **The debug window stays, behind a flag.** `CALMFRAME_DEBUG_WINDOW=1` opens it (the FPS sweep opens it too). It has the capture tools and the per-stage latency tables that Phase 6 uses.
 - **The dashboard is visible to no screen recorder,** as already noted under "One gotcha to plan around". Film it with the phone. No recording switch was built.
+
+#### Dashboard redesign (Sat Nov 14, afternoon, branch `dashboard-polish`)
+
+The user asked for a clean dashboard for the table demo, "an overlay almost" that a hotkey shows and hides. This departs from the Phase 5 checklist above on purpose: the status word, both thumbnails, the event log, the counter and the low capture-rate warning are gone.
+
+- **What it shows.**
+  - A header with the name, a small status mark and the protection switch. The mark uses the tray icon's three shapes, so it reads without colour.
+  - The flashes-per-second graph without axis numbers, and its latest value as a number. The graph value comes in half steps (Step 8), so it is shown exactly, for example 3.5.
+  - The sensitivity slider, and the flash-limit slider from 3 to 10.
+- **A notice line, only when something is wrong** (`src/shared/panelNotice.ts`, with tests). In order: "Not protecting" and the reason, for every way to be off except the user switching protection off; then Keep motion sharp unavailable. There is no fps warning: the user asked for none on the demo panel. Main's log still has the capture rate. Without the status word, a stalled capture would leave the switch on and the panel looking protected. To tell the two kinds of off apart, main's status relay carries `offByUser`, and `deriveStatus` returns `byUser`, which is only ever true while the status is off.
+- **The flash limit is a normal control, with no warning when raised** (the user's decision, reversing Step 7's "says so"). The label reads "(WCAG)" only at 3. It still goes back to 3 at every launch.
+- **Ignore movement and Keep motion sharp moved to the tray menu,** as checkboxes, so the fallback to the detector as first specified stays one click away.
+- **The window.** At first it was a frameless panel that only a global shortcut, Ctrl+Alt+Shift+D, could hide. The same evening the user asked for a normal window instead, so they wouldn't need the shortcut. The shortcut is gone.
+  - A title bar with minimize and close; no menu bar, not resizable, no maximize.
+  - Minimize puts it in the taskbar. Close hides it to the tray, and protection keeps running; the tray icon or its "Show dashboard" brings it back. Quit is in the tray menu.
+  - Still always on top at the overlay's level. It has to be: while the overlay draws its calm copy, a normal window under it would vanish behind the copy, because the copy can't contain the dashboard (it is excluded from capture).
+  - The page area is 360 DIP wide on request (362 measured at 150% scaling) and as tall as its content: the page reports its height and main fits the page area to it (382 DIP), under the title bar.
+  - Only the saved position is reused, not the old size, and never the off-screen spot of a minimized window.
+- **The thumbnails are still made by the overlay,** so they can come back without touching the frame loop. Main drops them.
+- **Keep motion sharp is now the default** (`DEFAULT_MITIGATION_METHOD = 'correct'`). The user asked for it once its tick box had moved out of sight into the tray menu. A settings file that already says `smooth` keeps smoothing. The offline render takes the app's defaults, so `--keep-motion-sharp` is on unless set off. Its known weaknesses are unchanged and still pinned by tests: a flickering rim at a hard edge, and pale halos along strong edges on real footage.
+- **Checked on the demo laptop.**
+  - Typecheck, lint and 377 tests pass.
+  - Both shortcuts registered, and the panel came up above the overlay with content protection on.
+  - The window was fitted to its content, and native capture ran at 51 to 61 fps.
+  - Its look was checked from a render of the page itself over Chromium's debugging port, because screen capture can't see it.
+  - The user's on-screen check is still to do.
 
 ### Phase 6: measure and validate (D, Saturday 1:00 to 6:00 PM)
 
@@ -773,6 +934,10 @@ The IRIS comparison ran overnight, unattended. The latency log came from the mor
 - **A reading of the detector** the CSV makes visible: with the extended-failure option on, the detector's `hazard` flag includes the extended failure. The validator's CSV reports the trigger and the extended rule as separate columns.
 - **IRIS's exit code is its verdict:** 0 pass, 1 fail, 2 pass with a warning, 3 error. The runner first treated 1 as an error.
 - **Still to do for this box:** three to five real clips (a music video with strobes, game footage, a talking-head negative), with their sources noted. They need someone to choose and source them.
+- **First real clip, not yet in the report (Sat Nov 14).** A 2:37 anime battle from YouTube ("Pokemon: Infernape vs Luxray", 1270×720 at 30 fps), supplied by the user and kept out of the repo.
+  - IRIS fails it at one moment, 2:19: near white to near black, then a 15 Hz flicker over more than half the frame, 9 transitions in the second. It also gives warnings in 17 other seconds.
+  - CalmFrame's WCAG setup flags 18 of the 157 seconds at the strict trigger, 2:19 among them, and 52 at the default trigger. With the Step 5a rule off, strict flags 86, so the rule removes most of them on real content too.
+  - **The IRIS-compatible setup flags nothing, so it misses the one second IRIS fails.** The Step 5a rule is why: with it off, that setup catches 2:19, but also flags 34 seconds IRIS passes. The 100% agreement above therefore holds for the 11 synthetic clips only. Say so wherever that figure is quoted. The app is not affected: it uses the WCAG area and catches 2:19 at every slider position.
 - **Tested in Coder without GitHub.** The overnight session could not push to the GitHub mirror, which needs the user's login. The branch went to the Coder workspace as a git bundle over `coder ssh` instead, and the suite ran there (`docs/CODER-LOG.md`).
 
 ### Native capture (stretch, Sat Nov 14 morning, trail #9)
@@ -802,6 +967,8 @@ Taken before the gate, at the user's request: Chromium's capture kept dipping un
 ### Gate: Saturday 6:00 PM
 
 If every box above is ticked, pick one stretch: regional smoothing (the visual win) or the Typesense hazard index (an extra prize). If any box is open, spend the evening closing it and polishing instead.
+
+**The one stretch is taken (Sat Nov 14, morning, trail #10):** brightness correction per region, as an experimental tick box that is off by default. The user asked for it before the gate, with the Phase 6 slow-motion box still open. See "Stretch: correct brightness per region" under "Mitigation math". Regional smoothing and the hazard index are not built.
 
 ### Phase 7: freeze and ship (everyone, Saturday 9:00 PM onward)
 
@@ -895,17 +1062,37 @@ Run the detector on the filter's own output. In the core tests, a 10 Hz full-con
 
 ## Demo, pitch and submission
 
-The demo's job is to make an invisible product visible: the screen stays calm while the graph and the thumbnail prove something dangerous was underneath. Protection stays on for the whole demo.
+The demo's job is to make an invisible product visible: the screen stays calm while the graph and its number prove something dangerous was underneath. Protection stays on for the whole demo.
 
 ### One gotcha to plan around
 
-Screen recorders cannot see the overlay, because it is excluded from capture by design. A screen recording of CalmFrame working shows the raw strobe. For the video, film the laptop with a phone. The dashboard is excluded from capture too (so the detector does not analyse it and the protected preview does not capture itself), which means a screen recorder cannot see the dashboard or its protected-preview pane either. Footage of both comes from the phone, unless Phase 5 adds a switch that lets the dashboard be recorded.
+Screen recorders cannot see the overlay, because it is excluded from capture by design. A screen recording of CalmFrame working shows the raw strobe. For the video, film the laptop with a phone. The dashboard is excluded from capture too (so the detector does not analyse it and the protected preview does not capture itself), which means a screen recorder cannot see the dashboard either. Footage of it comes from the phone: Phase 5 built no switch that lets the dashboard be recorded.
+
+A switch that made the overlay visible to recorders would make it visible to the detector too. It would then see its own calm picture, switch off, see the strobe and switch on again, every couple of seconds. So the demo's clean comparison is not a recording at all:
+
+#### The offline render (Sat Nov 14)
+
+`npm run render -- <video>` (`tools/validate/render.ts`) reads a video file, a normal screen recording for example, and writes a 1920×1080 video of what CalmFrame's viewer would see, next to the original.
+
+- **The same code as the app.** Every frame goes through the grid average, the detector and the overlay state machine from `src/core`. The picture is then calmed per pixel on the CPU with the arithmetic the GPU passes are checked against at startup: the smoothing filter, or the brightness correction.
+- **The app's settings, as options, with the app's defaults:** `--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`. One more option has no counterpart in the app yet: `--game-mode on` (see "Game mode" under "Mitigation math").
+- **Layouts:** `big-small` (the default: the protected picture at 1280×720 and the original at 640×360), `equal` (two at 960×540) and `protected-only` (the protected picture alone, full frame, no text, for editing). The original is small by default on purpose: it is unprotected flashing in a video other people will watch, and at 11% of the frame it stays under the quarter of the frame IRIS allows.
+- **What is written into the picture:** by default only the two labels ("With CalmFrame", "Original (unprotected)") and the flashes-per-second graph with its limit line. `--info full` adds the status, the settings used and a line saying the footage is an offline render. The user chose the plain picture as the default (Sat Nov 14), to keep the frame clean for the demo video.
+- **`--seen-line on` (off by default, added Sat Nov 14 evening at the user's request)** draws a second, green line on the graph: flashes per second in the calmed picture, over the original's bars, with a key above the graph ("Original", "With CalmFrame"). It is measured on the calmed picture's actual pixels, by a detector with the same settings as the one that drew the bars, so it shows the effect of whichever method was used. The report already counted that detector's flagged seconds; the line shows its value frame by frame. First run, 12 s of a Pokémon clip: the original's bars rose well over the limit line while the green line stayed near zero. The live app has no such line: its viewer check models only the smoothing filter, and measuring the drawn picture would take a new GPU pass after the feature freeze.
+- **It does not flatter the app.** As in the app, a frame is filtered with the strength decided on the frame before. The overlay's picture then reaches the viewer `--delay-frames` late (default 1, the measured capture-to-drawn time at 60 fps), over the screen as it is by then. So the first flash or two of each burst get through, as they do live.
+- **Also:** `--layout`, `--fps` (default: the source's, at most 60), `--start` and `--duration` in seconds, `--out`. The source is resampled to a constant frame rate, since screen recorders rarely keep one, and scaled to fit with black bars.
+- **A report** is printed and saved next to the video: how long the overlay was on, and the seconds flagged in the original, in the protected picture and in the finished video as a whole. It measures against the standard (strict trigger, limit 3) as well as against the settings asked for, and says so when the flash limit was raised.
+- **It needs only Node and ffmpeg, and no screen.** So far it has been run on the Windows laptop only. Its tests pass in the Coder workspace, but the workspace has no ffmpeg yet, so the command itself has not been run there (the README's `imageio-ffmpeg` step would add it). About 14 frames a second at 1280×720 on the demo laptop, so 30 s of 60 fps footage takes about two minutes.
+
+What it is not: **a recording of the live overlay.** It has no capture, no GPU, no compositor and no display. Since the plain picture no longer says so, the video has to: a caption or the narration must say that this footage is rendered offline with the app's own detection and filter code. With a raised flash limit the same goes for the limit. The phone shot of the real app is still what shows it is live.
+
+First run, on 10 s of the anime battle clip around its hardest moment (default settings): the overlay was on for 6.4 s, in 2 stretches. At the standard, the original was flagged in 3 of the 10 seconds and the protected picture in none, with the smoothing filter and with the brightness correction alike. To the eye the two look very different on this clip: the smoothing filter gives a soft blend of the recent frames, and the brightness correction gives the current frame with crisp outlines but washed-out, with pale halos along strong edges. Look at both before choosing which one the demo shows.
 
 ### Table demo, about 90 seconds
 
 1. Ask first: "Is anyone here sensitive to flashing lights?" If yes, show only the dashboard and the slow-motion comparison.
-2. Dashboard open, status Protected, graph flat.
-3. Play a video with strobing. The screen stays steady, the graph crosses the limit line, the thumbnail shows what was underneath, a log line appears.
+2. Dashboard open, protection on (a green tick by the name), graph flat.
+3. Play a video with strobing. The screen stays steady, while the graph crosses the limit line and the number shows how fast the flashing underneath is.
 4. Switch to a game in borderless-windowed mode. Same result, so it is not a video trick.
 5. Move the sensitivity slider and show the trade-off.
 6. Show the slow-motion side-by-side and the four numbers.

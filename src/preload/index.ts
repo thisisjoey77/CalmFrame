@@ -40,12 +40,7 @@ const api: CalmFrameApi = {
   onStatusBeat: (callback) => {
     ipcRenderer.on(IPC.statusBeat, (_event, beat) => callback(beat))
   },
-  onThumbnails: (callback) => {
-    ipcRenderer.on(IPC.thumbnails, (_event, thumbnails) => callback(thumbnails))
-  },
-  onFlashEvent: (callback) => {
-    ipcRenderer.on(IPC.flashEvent, (_event, event) => callback(event))
-  },
+  fitDashboard: (heightDip) => ipcRenderer.send(IPC.fitDashboard, heightDip),
   runSelfCheck: () => ipcRenderer.send(IPC.selfCheckRun),
   restartCapture: (size) => ipcRenderer.send(IPC.captureRestart, size),
   setDebugOnTop: (onTop) => ipcRenderer.send(IPC.debugSetOnTop, onTop),

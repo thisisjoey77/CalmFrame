@@ -22,16 +22,19 @@ npm run build:win  # packaged installer in dist/
 
 ### Using it
 
-CalmFrame runs in the tray and opens its dashboard at the top right of the screen. The dashboard stays above everything else, and screen recorders can't see it, so film it with a phone.
+CalmFrame runs in the tray and shows a small window at the top right of the screen. The window stays above everything else, and screen recorders can't see it, so film it with a phone.
 
-- **Status.** "Protected" means frames are flowing and the detector is running. "Smoothing" means flashing was found and you are seeing a smoothed copy. "Protection off" says why it is off. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck on "Protected".
-- **Graph.** Flashes per second over the most affected part of the screen, against the WCAG limit of 3.
-- **Raw input (unprotected)** is a 240×135 view of what the detector sees, kept small enough that it can't become a hazardous flashing area itself. **Protected preview** shows what you see while CalmFrame is smoothing.
-- **Flash events.** One line per event, such as `0:42, 8 Hz, 2.1 s, smoothed`, and a count of the events smoothed since start.
-- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more than 3 flashes in a second). Each position shows how many flashes of a 10 Hz strobe the spec predicts get through first.
-- **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
-- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the dashboard's switch and the tray menu. Protection is always on when CalmFrame starts.
-- Settings are saved in `%APPDATA%\calmframe\settings.json`. Closing the dashboard keeps CalmFrame in the tray. Quit from the tray menu.
+- **Minimize** puts the window in the taskbar. **Close** hides it to the tray, and protection keeps running: click the tray icon (in the ^ overflow by the clock, unless you pin it) to bring the window back.
+- **Protection switch,** with a small mark beside the name: a tick while CalmFrame watches the screen, a wave while it is smoothing flashing, a slashed ring when protection is off.
+- **Flashes per second** over the most affected part of the screen, as a graph against the limit line and as a number.
+- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more flashes in a second than the limit). Hover over the slider for how many flashes of a 10 Hz strobe the spec predicts get through first.
+- **Flash limit** is 3 flashes a second, the WCAG limit, and can be raised as far as 10 to see how content behaves at a looser limit. Above 3, CalmFrame lets through flashing that the WCAG rule counts as a hazard. It goes back to 3 every time CalmFrame starts.
+- **A notice line** appears under the name only when something is wrong: "Not protecting" and the reason, or Keep motion sharp not being available on this computer. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck looking protected.
+- **In the tray menu:**
+  - **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
+  - **Keep motion sharp (experimental)** (on by default) is how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. A thin rim can still flicker where flashing content meets still content. Untick it to blend recent frames instead (the smoothing filter).
+- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the panel's switch and the tray menu. Protection is always on when CalmFrame starts.
+- Settings are saved in `%APPDATA%\calmframe\settings.json`. To quit, right-click the tray icon and choose **Quit CalmFrame**.
 
 ## How it works
 
@@ -39,7 +42,7 @@ _TODO, summarising docs/SPEC.md:_
 
 - Capture: the primary screen at 60 fps and full resolution, through an overlay window that is excluded from capture. A small C++ module (`native/capture`) uses Windows' Desktop Duplication to copy each new screen frame into a shared GPU texture, which Electron's `sharedTexture` API hands to the overlay without the pixels ever leaving the GPU. If the module is missing or cannot start, CalmFrame falls back to Chromium's screen capture (`CALMFRAME_NATIVE_CAPTURE=0` forces it).
 - Detection: linear-light luminance on a 96×54 grid, a per-cell transition tracker, and the WCAG area rule over a 10° visual field.
-- Mitigation: a per-pixel running average whose strength is solved from the detected flash, plus dimming where smoothing alone can't get under the threshold.
+- Mitigation: a per-pixel running average whose strength is solved from the detected flash, plus dimming where smoothing alone can't get under the threshold. An experimental alternative keeps the current frame and scales each region's brightness to that region's running average.
 
 ## Measurements
 
@@ -58,6 +61,21 @@ npm run validate:all     # makes the 11 test clips, runs IRIS and CalmFrame, wri
 ```
 
 `imageio-ffmpeg` brings its own ffmpeg, so nothing needs installing system-wide. Set `CALMFRAME_FFMPEG` to use another ffmpeg, or `CALMFRAME_IRIS` for another `iris` command. To check one file: `npm run validate -- <video> [--area wcag|iris] [--trigger early|strict] [--extended]`. That writes one CSV row per second to `measurements/validate/`.
+
+### Demo footage: the offline render
+
+Screen recorders can't see the overlay, so a recording of CalmFrame at work shows the raw screen. For a clean comparison, `npm run render` works from a video file instead. It runs every frame through the same detection and filter code as the app and writes a 1920×1080 video with the protected picture next to the original:
+
+```sh
+npm run render -- myclip.mp4                              # the app's default settings
+npm run render -- myclip.mp4 --keep-motion-sharp on       # the experimental method
+npm run render -- myclip.mp4 --sensitivity strict --flash-limit 5 --ignore-movement off
+npm run render -- myclip.mp4 --layout equal --start 30 --duration 20 --out demo.mp4
+```
+
+The options are the app's settings (`--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`). `--layout` is `big-small` (default), `equal` or `protected-only`. `--game-mode on` tries an experimental third method that the app does not have yet, meant for fast games: it dims flashing in big zones and never lifts it toward white, so the picture stays sharp and coloured but gets darker. The picture has the two labelled pictures and a flashes-per-second graph; `--info full` also writes in the status, the settings used and a line saying the footage is an offline render. `--seen-line on` adds a green line to the graph: the flashes per second in the calmed picture, measured on its pixels, next to the original's bars, so you can see the difference CalmFrame makes. It needs the same ffmpeg as the validator above, and prints a short report of how many seconds were flagged before and after.
+
+This is a simulation, not a recording of the live overlay. Say so wherever the footage is shown. As in the app, the first flash or two of each burst still gets through.
 
 ## Limitations
 

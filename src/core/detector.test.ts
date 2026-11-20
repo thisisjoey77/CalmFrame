@@ -72,6 +72,43 @@ describe('Phase 1 box 1: strobes and cuts on synthetic grids', () => {
   })
 })
 
+describe('Step 7: the flash limit (3 by default; raised only for testing)', () => {
+  const both = (frequencyHz: number, flashLimit: number): boolean[] => [
+    run(strobe(frequencyHz), { flashLimit }).everHazard,
+    run(strobe(frequencyHz), { flashLimit, trigger: 'strict' }).everHazard
+  ]
+
+  it('at 3 it is the detector as it always was', () => {
+    for (const f of [2, 3.75, 10]) {
+      expect(both(f, 3)).toEqual([
+        run(strobe(f)).everHazard,
+        run(strobe(f), { trigger: 'strict' }).everHazard
+      ])
+    }
+  })
+
+  it('at 5, a 3.75 Hz strobe is let through and 6 Hz and faster are hazards', () => {
+    expect(both(3.75, 5)).toEqual([false, false])
+    expect(both(6, 5)).toEqual([true, true])
+    expect(both(10, 5)).toEqual([true, true])
+  })
+
+  it('at 7, a 6 Hz strobe is let through and 7.5 Hz and faster are hazards', () => {
+    expect(both(6, 7)).toEqual([false, false])
+    expect(both(7.5, 7)).toEqual([true, true])
+    expect(both(10, 7)).toEqual([true, true])
+  })
+
+  it('still fires the early trigger on the third fast transition at a raised limit', () => {
+    const result = run(strobe(10), { flashLimit: 7 })
+    expect(result.firstHazard?.frame).toBe(result.luminanceTransitionFrames[2].frame)
+  })
+
+  it('rejects a limit that is not positive', () => {
+    expect(() => new Detector({ flashLimit: 0 })).toThrow()
+  })
+})
+
 describe('Phase 1 box 2: early mode fires on exactly the third fast transition', () => {
   it('from a dark lead-in', () => {
     const result = run(strobe(10))

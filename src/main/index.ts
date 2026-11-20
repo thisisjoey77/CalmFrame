@@ -17,7 +17,6 @@ import {
   DASHBOARD_HEIGHT,
   DASHBOARD_MARGIN,
   DASHBOARD_MIN_HEIGHT,
-  DASHBOARD_MIN_WIDTH,
   DASHBOARD_WIDTH,
   DEBUG_CAPTURE_SIZES,
   DEBUG_FREEZE_ACCELERATOR,
@@ -49,8 +48,7 @@ import {
   type SelfCheckResult,
   type SmoothSelfTestResult,
   type StateChange,
-  type StatusBeat,
-  type Thumbnails
+  type StatusBeat
 } from '../shared/messages'
 import type { Settings } from '../shared/settings'
 import { KILL_SWITCH_LABEL, STATUS_LABEL, deriveStatus, type StatusView } from '../shared/status'
@@ -66,7 +64,7 @@ let debugWin: BrowserWindow | null = null
 let tray: CalmTray | null = null
 let store: SettingsStore | null = null
 
-/** When the app started. The dashboard's event log counts from here. */
+/** When the app started. The flash event log lines count from here. */
 const startedAtWallMs = Date.now()
 /** Set when the app is really quitting, so closing the dashboard is no longer a hide. */
 let quitting = false
@@ -95,6 +93,8 @@ let smoothSelfTest: SmoothSelfTestResult | null = null
 let protectionOn = true
 /** Why protection was last switched off, in words for the status line. Null while on. */
 let offReason: string | null = null
+/** Protection was last switched off by the user, not by a failure. False while on. */
+let offByUser = false
 /** The latest heartbeat, and when it arrived (Date.now()), or null before the first. */
 let lastHeartbeat: Heartbeat | null = null
 let lastHeartbeatAt: number | null = null
@@ -248,19 +248,47 @@ function createOverlayWindow(): BrowserWindow {
 }
 
 /** Where the dashboard goes: where it was left, if that is still on a screen, else the top
- *  right of the primary display's work area. */
+ *  right of the primary display's work area. Only the saved position is reused: the width
+ *  is fixed and the height follows the page (IPC.fitDashboard), so a size saved by the
+ *  larger dashboard before its redesign doesn't come back. The size is the page's (the
+ *  window is made with useContentSize); the title bar comes on top. */
 function dashboardBounds(): Rectangle {
   const saved = store?.settings.dashboardBounds ?? null
-  if (saved && titleBarOnScreen(saved)) return saved
   const area = screen.getPrimaryDisplay().workArea
   const width = Math.min(DASHBOARD_WIDTH, area.width - 2 * DASHBOARD_MARGIN)
   const height = Math.min(DASHBOARD_HEIGHT, area.height - 2 * DASHBOARD_MARGIN)
+  const placed = saved ? { x: saved.x, y: saved.y, width, height } : null
+  if (placed && titleBarOnScreen(placed)) return placed
   return {
     x: area.x + area.width - width - DASHBOARD_MARGIN,
     y: area.y + DASHBOARD_MARGIN,
     width,
     height
   }
+}
+
+/**
+ * Fit the dashboard's page area to the height its page needs (IPC.fitDashboard), kept on
+ * the display it is on: no taller than the work area with the title bar, and moved up if
+ * the new height would run off the bottom.
+ */
+function fitDashboard(heightDip: number): void {
+  if (!alive(dashboardWin) || dashboardWin.isMinimized()) return
+  const win = dashboardWin
+  const outer = win.getBounds()
+  const area = screen.getDisplayMatching(outer).workArea
+  const [contentWidth, contentHeight] = win.getContentSize()
+  const titleBar = outer.height - contentHeight
+  const height = Math.round(
+    Math.min(
+      Math.max(heightDip, DASHBOARD_MIN_HEIGHT),
+      area.height - 2 * DASHBOARD_MARGIN - titleBar
+    )
+  )
+  if (height !== contentHeight) win.setContentSize(contentWidth, height)
+  const b = win.getBounds()
+  const y = Math.max(area.y, Math.min(b.y, area.y + area.height - b.height))
+  if (y !== b.y) win.setPosition(b.x, y)
 }
 
 /** Enough of the window's top edge is inside some display's work area to grab it. */
@@ -274,27 +302,29 @@ function titleBarOnScreen(b: Rectangle): boolean {
 }
 
 /**
- * The dashboard (Phase 5). Above the overlay and excluded from capture, so it stays sharp
- * and live while the rest of the screen is smoothed, and neither the detector nor its own
- * protected preview sees it. Closing it hides it to the tray; Quit is in the tray menu.
+ * The dashboard (Phase 5; a small panel since its redesign, Sat Nov 14). Above the overlay
+ * and excluded from capture, so it stays sharp and live while the rest of the screen is
+ * smoothed, and the detector never sees it. A normal window with a title bar (the user's
+ * choice, Sat Nov 14 evening): minimize puts it in the taskbar, and close hides it to the
+ * tray, which shows it again. Quit is in the tray menu.
  */
 function createDashboardWindow(): BrowserWindow {
   const win = new BrowserWindow({
     ...dashboardBounds(),
-    minWidth: DASHBOARD_MIN_WIDTH,
-    minHeight: DASHBOARD_MIN_HEIGHT,
+    useContentSize: true,
     show: false,
-    title: 'CalmFrame',
-    autoHideMenuBar: true,
-    backgroundColor: '#14181d',
-    alwaysOnTop: true,
+    resizable: false,
     maximizable: false,
     fullscreenable: false,
+    title: 'CalmFrame',
+    backgroundColor: '#14181d',
+    alwaysOnTop: true,
     webPreferences: {
       preload: preloadPath,
       sandbox: false
     }
   })
+  win.removeMenu()
   win.setContentProtection(true)
 
   win.once('ready-to-show', () => {
@@ -307,6 +337,7 @@ function createDashboardWindow(): BrowserWindow {
   })
   // Applied again whenever it is shown, as for the overlay.
   win.on('show', () => win.setContentProtection(true))
+  // Closing it hides it to the tray: protection keeps running. Quit is in the tray menu.
   win.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
@@ -316,14 +347,13 @@ function createDashboardWindow(): BrowserWindow {
   win.on('closed', () => {
     dashboardWin = null
   })
-  // 'move' and 'resize' rather than 'moved' and 'resized', which Windows only sends at the
-  // end of a drag with the mouse, not for snapping with Win+arrow keys. The store writes
-  // the file once, a moment after the last change.
-  const saveBounds = (): void => {
+  // 'move' rather than 'moved', which Windows only sends at the end of a drag with the
+  // mouse, not for snapping with Win+arrow keys. The store writes the file once, a moment
+  // after the last change.
+  // A minimized window is parked off screen, which is not where it was left.
+  win.on('move', () => {
     if (!win.isMinimized()) store?.update({ dashboardBounds: win.getBounds() })
-  }
-  win.on('move', saveBounds)
-  win.on('resize', saveBounds)
+  })
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[dashboard] renderer gone (${details.reason}), reloading`)
     if (!win.isDestroyed()) loadPage(win, 'dashboard')
@@ -340,11 +370,13 @@ function createDashboardWindow(): BrowserWindow {
 /** Put the dashboard above the overlay: always on top at the overlay's level, set after
  *  the overlay's, which puts it higher in that band. */
 function raiseDashboard(): void {
-  if (!alive(dashboardWin) || !dashboardWin.isVisible()) return
+  if (!alive(dashboardWin) || !dashboardWin.isVisible() || dashboardWin.isMinimized()) return
   dashboardWin.setAlwaysOnTop(true, 'screen-saver')
   dashboardWin.moveTop()
 }
 
+/** Show the dashboard and focus it, minimized or hidden: from the tray, or a second
+ *  launch of the app. */
 function showDashboard(): void {
   if (!alive(dashboardWin)) {
     dashboardWin = createDashboardWindow()
@@ -403,6 +435,7 @@ function currentBeat(): StatusBeat | null {
     ...lastHeartbeat,
     overlayVisible: alive(overlayWin) && overlayWin.isVisible(),
     offReason,
+    offByUser,
     ageMs: Date.now() - lastHeartbeatAt
   }
 }
@@ -446,10 +479,12 @@ function showOverlay(reason: string): void {
  * go to Disabled. A frozen renderer gets the message when it recovers, and stays hidden
  * until the user switches protection back on.
  * @param reason in words, for the status line ("Switched off from the dashboard")
+ * @param byUser the user asked, so the dashboard needs no warning (src/shared/panelNotice.ts)
  */
-function disableProtection(reason: string): void {
+function disableProtection(reason: string, byUser = false): void {
   protectionOn = false
   offReason = reason
+  offByUser = byUser
   hideOverlay(`Protection off: ${reason}`)
   if (alive(overlayWin)) overlayWin.webContents.send(IPC.protection, false, reason)
   pushStatus()
@@ -473,6 +508,7 @@ function enableProtection(reason: string): boolean {
   }
   protectionOn = true
   offReason = null
+  offByUser = false
   if (alive(overlayWin)) overlayWin.webContents.send(IPC.protection, true, reason)
   showOverlay(reason)
   return true
@@ -480,7 +516,7 @@ function enableProtection(reason: string): boolean {
 
 function setProtection(enabled: boolean, where: 'dashboard' | 'tray menu'): boolean {
   if (enabled) return enableProtection(where)
-  disableProtection(`Switched off from the ${where}`)
+  disableProtection(`Switched off from the ${where}`, true)
   return true
 }
 
@@ -530,6 +566,22 @@ function broadcastSettings(settings: Settings): void {
   for (const win of [overlayWin, dashboardWin, debugWin]) {
     if (alive(win)) win.webContents.send(IPC.settings, settings)
   }
+  tray?.setSettings(settings)
+}
+
+/** Change some settings, from a renderer or the tray menu: validated and saved by the
+ *  store, then sent to every window and the tray. */
+function updateSettings(patch: unknown): void {
+  if (!store) return
+  const before = store.settings
+  const after = store.update(patch)
+  if (after === before) return
+  logSafely(
+    'settings',
+    () =>
+      `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}, mitigation ${after.mitigation}, flash limit ${after.flashLimit}/s`
+  )
+  broadcastSettings(after)
 }
 
 function installIpc(): void {
@@ -560,17 +612,11 @@ function installIpc(): void {
     }
   })
 
-  ipcMain.on(IPC.updateSettings, (_event, patch: unknown) => {
-    if (!store) return
-    const before = store.settings
-    const after = store.update(patch)
-    if (after === before) return
-    logSafely(
-      'settings',
-      () =>
-        `[settings] sensitivity ${JSON.stringify(after.sensitivity)}, concurrency rule ${after.concurrency}`
-    )
-    broadcastSettings(after)
+  ipcMain.on(IPC.updateSettings, (_event, patch: unknown) => updateSettings(patch))
+
+  ipcMain.on(IPC.fitDashboard, (event, heightDip: unknown) => {
+    if (!alive(dashboardWin) || event.sender !== dashboardWin.webContents) return
+    if (typeof heightDip === 'number' && Number.isFinite(heightDip)) fitDashboard(heightDip)
   })
 
   ipcMain.handle(IPC.setProtection, (_event, enabled: unknown) =>
@@ -623,6 +669,14 @@ function installIpc(): void {
       'smooth self-test',
       () => `[smooth self-test] ${result.pass ? 'PASS' : 'FAIL'}: ${result.detail}`
     )
+    const correction = result.correction
+    if (correction) {
+      logSafely(
+        'correct self-test',
+        () =>
+          `[correct self-test] ${correction.pass ? 'PASS' : 'FAIL ("Keep motion sharp" will smooth instead)'}: ${correction.detail}`
+      )
+    }
   })
 
   ipcMain.on(IPC.stateChange, (_event, change: StateChange) => {
@@ -665,7 +719,7 @@ function installIpc(): void {
         `[detect] graph ${fmt(stats.graphValue, 1)} | ${stats.hazard ? `HAZARD ${stats.type}` : 'safe'} | ` +
         `f ${fmt(stats.frequencyHz, 1)} Hz, dL ${fmt(stats.flashSize, 2)}, area ${fmt(stats.areaFraction, 2)}, ` +
         `hot ${stats.hotCells}, rule ${stats.concurrency} (set aside ${stats.ignoredReversals}) | state ${stats.state}, alpha ${fmt(sm.alpha, 3)}, d ${fmt(sm.dim, 2)}, ` +
-        `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''} | ` +
+        `opacity ${fmt(sm.opacity, 2)}${sm.drawn ? ' (drawn)' : ''}, method ${sm.method} | ` +
         `seen: ${v.checking ? `graph ${fmt(v.graphValue, 1)}, residual ${fmt(v.residual, 3)}` : 'overlay not drawn'} | ` +
         `cost median ${fmt(stats.cost.median, 2)} ms, p95 ${fmt(stats.cost.p95, 2)} ms ` +
         `(issue ${fmt(stats.issueMedianMs, 2)}, copy ${fmt(stats.copyMedianMs, 2)}, detector ${fmt(stats.detectorMedianMs, 2)}; ` +
@@ -679,15 +733,10 @@ function installIpc(): void {
     )
   })
 
-  // The thumbnails only go to the dashboard, and only while someone can see it.
-  ipcMain.on(IPC.thumbnails, (_event, thumbnails: Thumbnails) => {
-    if (alive(dashboardWin) && dashboardWin.isVisible() && !dashboardWin.isMinimized()) {
-      dashboardWin.webContents.send(IPC.thumbnails, thumbnails)
-    }
-  })
+  // IPC.thumbnails is not listened to: no window has shown the thumbnails since the
+  // dashboard's redesign (Sat Nov 14), so they are dropped here.
 
   ipcMain.on(IPC.flashEvent, (_event, event: FlashEventMessage) => {
-    sendToUi(IPC.flashEvent, event)
     logSafely(
       'event',
       () =>
@@ -759,18 +808,21 @@ function start(): void {
     setProtection: (enabled) => {
       if (!setProtection(enabled, 'tray menu')) tray?.refresh()
     },
+    setIgnoreMovement: (on) => updateSettings({ concurrency: on ? 'one-way' : 'off' }),
+    setKeepMotionSharp: (on) => updateSettings({ mitigation: on ? 'correct' : 'smooth' }),
     showDashboard,
     quit: () => {
       quitting = true
       app.quit()
     }
   })
+  tray.setSettings(store.settings)
   refreshStatus()
   setInterval(refreshStatus, STATUS_REFRESH_MS)
 
   // Kill switch ("Safety mechanisms"): to Disabled and hidden at once, and back on.
   const registered = globalShortcut.register(KILL_SWITCH_ACCELERATOR, () => {
-    if (protectionOn) disableProtection(`Switched off with ${KILL_SWITCH_LABEL}`)
+    if (protectionOn) disableProtection(`Switched off with ${KILL_SWITCH_LABEL}`, true)
     else enableProtection('kill switch')
   })
   console.log(`[kill switch] ${KILL_SWITCH_ACCELERATOR} registered: ${registered}`)

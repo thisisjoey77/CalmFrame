@@ -1,10 +1,13 @@
 /**
  * The user's settings (docs/SPEC.md, Phase 5): the sensitivity slider, the "Ignore
- * movement" switch and where the dashboard sits. Main keeps them in a JSON file in the
+ * movement" switch, the experimental "Keep motion sharp" tick box (trail #10), the flash
+ * limit (a testing control) and where the dashboard sits. Main keeps them in a JSON file in the
  * app's userData folder, so they persist across restarts.
  *
  * Protection itself is not a setting: it starts on at every launch. A switch left off by
- * accident must not leave someone unprotected after a restart.
+ * accident must not leave someone unprotected after a restart. The flash limit is a setting
+ * while the app runs, but for the same reason it is never read back from the file: it is at
+ * the standard's 3 at every launch.
  *
  * Everything that arrives from the file or a renderer goes through these validators, so a
  * damaged file or a bad message falls back to the defaults field by field.
@@ -15,12 +18,17 @@ import {
   DASHBOARD_MIN_HEIGHT,
   DASHBOARD_MIN_WIDTH,
   DEFAULT_CONCURRENCY_RULE,
+  DEFAULT_FLASH_LIMIT,
+  DEFAULT_MITIGATION_METHOD,
   EARLY_TRIGGER_STREAK,
+  FLASH_LIMIT_MAX,
+  FLASH_LIMIT_MIN,
   SENSITIVITY_STREAK_STEPS,
   SLIDER_EXAMPLE_HZ,
   SLIDER_EXAMPLE_LATENCY_MS,
-  STRICT_TRIGGER_COUNT,
-  type ConcurrencyRule
+  strictTriggerCount,
+  type ConcurrencyRule,
+  type MitigationMethod
 } from './config'
 
 /** One position of the sensitivity slider (Step 7): the early trigger at some N, or
@@ -38,6 +46,12 @@ export interface Settings {
   sensitivity: Sensitivity
   /** The Step 5a concurrency rule: 'one-way' is "Ignore movement" ticked. */
   concurrency: ConcurrencyRule
+  /** How a hazard is calmed: 'smooth' (the default), or 'correct' when "Keep motion sharp"
+   *  is ticked ("Stretch: correct brightness per region"). */
+  mitigation: MitigationMethod
+  /** The flash-rate limit in flashes per second (Step 7): 3, the standard's, unless the
+   *  dashboard's flash-limit slider has raised it for testing. Not restored at launch. */
+  flashLimit: number
   /** Where the dashboard was last left, in DIP. Null until it has been moved or resized. */
   dashboardBounds: WindowBounds | null
 }
@@ -57,6 +71,8 @@ export const DEFAULT_SENSITIVITY: Sensitivity = {
 export const DEFAULT_SETTINGS: Settings = {
   sensitivity: DEFAULT_SENSITIVITY,
   concurrency: DEFAULT_CONCURRENCY_RULE,
+  mitigation: DEFAULT_MITIGATION_METHOD,
+  flashLimit: DEFAULT_FLASH_LIMIT,
   dashboardBounds: null
 }
 
@@ -87,6 +103,20 @@ function parseConcurrency(raw: unknown): ConcurrencyRule | null {
   return raw === 'one-way' || raw === 'off' ? raw : null
 }
 
+function parseMitigation(raw: unknown): MitigationMethod | null {
+  return raw === 'smooth' || raw === 'correct' ? raw : null
+}
+
+/** A flash limit from untrusted input: a whole number the slider offers, or null. */
+export function parseFlashLimit(raw: unknown): number | null {
+  return typeof raw === 'number' &&
+    Number.isInteger(raw) &&
+    raw >= FLASH_LIMIT_MIN &&
+    raw <= FLASH_LIMIT_MAX
+    ? raw
+    : null
+}
+
 /** Window bounds from untrusted input, or null. Whether they are on a screen is for main
  *  to check against the displays. */
 export function parseBounds(raw: unknown): WindowBounds | null {
@@ -104,12 +134,15 @@ export function parseBounds(raw: unknown): WindowBounds | null {
   }
 }
 
-/** Settings from the file, field by field: anything missing or invalid takes its default. */
+/** Settings from the file, field by field: anything missing or invalid takes its default.
+ *  The flash limit always does: a limit raised for a test must not outlive the session. */
 export function parseSettings(raw: unknown): Settings {
   const r = isObject(raw) ? raw : {}
   return {
     sensitivity: parseSensitivity(r.sensitivity) ?? DEFAULT_SETTINGS.sensitivity,
     concurrency: parseConcurrency(r.concurrency) ?? DEFAULT_SETTINGS.concurrency,
+    mitigation: parseMitigation(r.mitigation) ?? DEFAULT_SETTINGS.mitigation,
+    flashLimit: DEFAULT_SETTINGS.flashLimit,
     dashboardBounds: parseBounds(r.dashboardBounds)
   }
 }
@@ -123,6 +156,10 @@ export function applySettingsPatch(current: Settings, patch: unknown): Settings 
     next.sensitivity = parseSensitivity(patch.sensitivity) ?? current.sensitivity
   if ('concurrency' in patch)
     next.concurrency = parseConcurrency(patch.concurrency) ?? current.concurrency
+  if ('mitigation' in patch)
+    next.mitigation = parseMitigation(patch.mitigation) ?? current.mitigation
+  if ('flashLimit' in patch)
+    next.flashLimit = parseFlashLimit(patch.flashLimit) ?? current.flashLimit
   if ('dashboardBounds' in patch) {
     next.dashboardBounds = parseBounds(patch.dashboardBounds) ?? current.dashboardBounds
   }
@@ -132,17 +169,18 @@ export function applySettingsPatch(current: Settings, patch: unknown): Settings 
 /** The detector options the settings ask for. */
 export function detectorOptionsFor(
   settings: Settings
-): Pick<DetectorOptions, 'trigger' | 'streakN' | 'concurrency'> {
+): Pick<DetectorOptions, 'trigger' | 'streakN' | 'concurrency' | 'flashLimit'> {
   const s = settings.sensitivity
+  const { concurrency, flashLimit } = settings
   return s.trigger === 'early'
-    ? { trigger: 'early', streakN: s.streakN, concurrency: settings.concurrency }
-    : { trigger: 'strict', concurrency: settings.concurrency }
+    ? { trigger: 'early', streakN: s.streakN, concurrency, flashLimit }
+    : { trigger: 'strict', concurrency, flashLimit }
 }
 
 /** Fast reversals a cell needs before it counts as hot: N for the early trigger, the 1 s
- *  count for strict (Step 7). */
-export function transitionsToTrigger(s: Sensitivity): number {
-  return s.trigger === 'early' ? s.streakN : STRICT_TRIGGER_COUNT
+ *  count for strict, which follows from the flash limit (Step 7). */
+export function transitionsToTrigger(s: Sensitivity, flashLimit = DEFAULT_FLASH_LIMIT): number {
+  return s.trigger === 'early' ? s.streakN : strictTriggerCount(flashLimit)
 }
 
 /**
@@ -154,7 +192,8 @@ export function transitionsToTrigger(s: Sensitivity): number {
 export function predictedFlashesSeen(
   s: Sensitivity,
   frequencyHz = SLIDER_EXAMPLE_HZ,
-  latencyMs = SLIDER_EXAMPLE_LATENCY_MS
+  latencyMs = SLIDER_EXAMPLE_LATENCY_MS,
+  flashLimit = DEFAULT_FLASH_LIMIT
 ): number {
-  return (transitionsToTrigger(s) - 1) / 2 + (frequencyHz * latencyMs) / 1000
+  return (transitionsToTrigger(s, flashLimit) - 1) / 2 + (frequencyHz * latencyMs) / 1000
 }

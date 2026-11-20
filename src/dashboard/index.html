@@ -8,9 +8,10 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
     <style>
-      /* Calm on purpose (Phase 5): dark, muted, high-contrast text, no transitions or
-         animation anywhere except the graph's scrolling. Status colours are close in
-         brightness, and none is a saturated red, so a status change is never a flash. */
+      /* A small panel (redesigned Sat Nov 14, afternoon; a normal window since evening). Calm on purpose: dark,
+         muted, high-contrast text, no transitions or animation anywhere except the graph's
+         scrolling. It sits above the overlay and is not smoothed, so nothing in it may
+         blink. Status colours are close in brightness and none is a saturated red. */
       :root {
         color-scheme: dark;
         --bg: #14181d;
@@ -43,98 +44,79 @@
         margin: 0;
         background: var(--bg);
         color: var(--text);
-      }
-      main {
-        padding: 14px 16px 18px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-      h2 {
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--muted);
-        margin: 0 0 6px;
-      }
-      .hint {
-        font-size: 13px;
-        color: var(--muted);
-        margin: 6px 0 0;
+        /* The window is fitted to the panel's height, so nothing should ever scroll. */
+        overflow: hidden;
+        user-select: none;
       }
       :focus-visible {
         outline: 3px solid var(--focus);
-        outline-offset: 3px;
+        outline-offset: 2px;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
 
-      /* The one large status indicator. */
-      #status {
-        display: grid;
-        grid-template-columns: 52px 1fr auto;
-        grid-template-rows: auto auto;
-        column-gap: 12px;
-        align-items: center;
-        padding: 12px 14px;
-        background: var(--panel);
-        border: 2px solid var(--status-color);
-        border-radius: 12px;
-      }
-      #status.protected {
-        --status-color: var(--protected);
-      }
-      #status.smoothing {
-        --status-color: var(--smoothing);
-      }
-      #status.off {
-        --status-color: var(--off);
-      }
-      #status-mark {
-        grid-row: 1 / 3;
-        width: 52px;
-        height: 52px;
-        color: var(--status-color);
-      }
-      #status-mark .shape {
-        display: none;
-      }
-      #status.protected #status-mark .protected,
-      #status.smoothing #status-mark .smoothing,
-      #status.off #status-mark .off {
-        display: inline;
-      }
-      #status-word {
-        font-size: 30px;
-        font-weight: 700;
-        line-height: 1.1;
-        margin: 0;
-        align-self: end;
-      }
-      #status-detail {
-        grid-column: 2 / 4;
-        margin: 2px 0 0;
-        color: var(--muted);
-        align-self: start;
-      }
-      #protection {
-        grid-column: 3;
-        grid-row: 1;
-        justify-self: end;
-        display: inline-flex;
+      header {
+        display: flex;
         align-items: center;
         gap: 10px;
+        padding: 10px 12px 10px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      h1 {
+        flex: 1;
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+      }
+
+      /* The small status mark: a filled disc with a tick, a disc with a wave, or a slashed
+         ring, so it reads without colour too (the tray icon's shapes). */
+      #mark {
+        width: 22px;
+        height: 22px;
+        flex: none;
+      }
+      #mark.protected {
+        color: var(--protected);
+      }
+      #mark.smoothing {
+        color: var(--smoothing);
+      }
+      #mark.off {
+        color: var(--off);
+      }
+      #mark .shape {
+        display: none;
+      }
+      #mark.protected .protected,
+      #mark.smoothing .smoothing,
+      #mark.off .off {
+        display: inline;
+      }
+
+      /* The protection switch. */
+      #protection {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
         font: inherit;
         font-weight: 600;
         color: var(--text);
         background: transparent;
         border: 2px solid var(--border);
         border-radius: 999px;
-        padding: 5px 12px 5px 5px;
+        padding: 4px 10px 4px 4px;
         cursor: pointer;
       }
       #protection .track {
-        width: 44px;
-        height: 24px;
+        width: 40px;
+        height: 22px;
         border-radius: 999px;
         background: #3b434c;
         position: relative;
@@ -143,8 +125,8 @@
         position: absolute;
         top: 3px;
         left: 3px;
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
         border-radius: 50%;
         background: var(--text);
       }
@@ -152,84 +134,78 @@
         background: var(--protected);
       }
       #protection[aria-checked='true'] .knob {
-        left: 23px;
+        left: 21px;
+      }
+      #protection-label {
+        min-width: 2ch;
       }
 
-      #fps-warning {
+      /* The one notice line, only when something is wrong. */
+      #notice {
         margin: 0;
-        padding: 10px 12px;
-        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 13px;
+        border-bottom: 1px solid var(--border);
+      }
+      #notice.problem {
         background: var(--warn-bg);
         color: var(--warn-text);
-        font-size: 14px;
       }
-
-      #graph {
-        width: 100%;
-        height: 112px;
-        display: block;
-        border-radius: 6px;
-      }
-
-      .thumbs {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-      }
-      figure {
-        margin: 0;
-      }
-      figure canvas {
-        display: block;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-      }
-      figcaption {
-        font-size: 13px;
-        font-weight: 600;
-        margin-top: 4px;
-      }
-      .preview-box {
-        position: relative;
-      }
-      #preview-idle {
-        position: absolute;
-        inset: 1px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        padding: 6px;
-        font-size: 12px;
+      #notice.info {
+        background: var(--panel);
         color: var(--muted);
       }
 
-      .control {
+      section {
         padding: 12px 14px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
       }
-      .control {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
+      section + section {
+        border-top: 1px solid var(--border);
       }
-      .title-row {
+      .row {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
         gap: 10px;
       }
-      .title-row label {
+      h2,
+      label {
+        margin: 0;
+        font-size: 14px;
         font-weight: 600;
       }
-      #sensitivity-name {
+      .value {
+        font-size: 14px;
         font-weight: 600;
         color: var(--muted);
         text-align: right;
       }
-      #sensitivity {
+
+      #rate {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        font-variant-numeric: tabular-nums;
+      }
+      #rate-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      #graph {
+        display: block;
+        width: 100%;
+        height: 96px;
+        margin-top: 6px;
+        border-radius: 6px;
+      }
+
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      input[type='range'] {
         width: 100%;
         margin: 8px 0 2px;
         accent-color: var(--smoothing);
@@ -240,83 +216,19 @@
         font-size: 12px;
         color: var(--muted);
       }
-      #sensitivity-desc {
-        margin: 6px 0 0;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .check {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .check input {
-        width: 20px;
-        height: 20px;
-        margin: 1px 0 0;
-        accent-color: var(--smoothing);
-        flex: none;
-      }
-
-      .events-head {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      #counter {
-        font-size: 15px;
-        color: var(--text);
-        text-transform: none;
-        letter-spacing: 0;
-      }
-      #counter strong {
-        font-size: 22px;
-      }
-      #events {
-        margin: 0;
-        padding: 6px 10px;
-        list-style: none;
-        font-family: Consolas, 'Cascadia Mono', monospace;
-        font-variant-numeric: tabular-nums;
-        font-size: 13px;
-        max-height: 128px;
-        overflow-y: auto;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-      }
-      #events li {
-        padding: 2px 0;
-      }
-      #events li.empty {
-        font-family: 'Segoe UI', system-ui, sans-serif;
-        color: var(--muted);
-      }
-      footer {
-        font-size: 13px;
-        color: var(--muted);
-      }
-      kbd {
-        font-family: inherit;
-        font-weight: 600;
-        color: var(--text);
-      }
     </style>
   </head>
   <body>
-    <main>
-      <section id="status" class="off" aria-labelledby="status-word">
-        <svg id="status-mark" viewBox="0 0 64 64" aria-hidden="true">
+    <main id="panel">
+      <header>
+        <svg id="mark" class="off" viewBox="0 0 64 64" aria-hidden="true">
           <g class="shape protected">
             <circle cx="32" cy="32" r="28" fill="currentColor" />
             <path
               d="M19 33 l9 9 l17 -19"
               fill="none"
               stroke="#14181d"
-              stroke-width="6"
+              stroke-width="7"
               stroke-linecap="round"
               stroke-linejoin="round"
             />
@@ -327,16 +239,17 @@
               d="M14 34 C 20 24, 26 24, 32 32 S 44 40, 50 30"
               fill="none"
               stroke="#14181d"
-              stroke-width="6"
+              stroke-width="7"
               stroke-linecap="round"
             />
           </g>
           <g class="shape off">
-            <circle cx="32" cy="32" r="25" fill="none" stroke="currentColor" stroke-width="6" />
-            <path d="M14 50 L50 14" stroke="currentColor" stroke-width="6" stroke-linecap="round" />
+            <circle cx="32" cy="32" r="25" fill="none" stroke="currentColor" stroke-width="7" />
+            <path d="M14 50 L50 14" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
           </g>
         </svg>
-        <h1 id="status-word" aria-live="polite">Protection off</h1>
+        <h1>CalmFrame</h1>
+        <span id="status-text" class="visually-hidden" aria-live="polite">Protection off</span>
         <button
           id="protection"
           type="button"
@@ -347,52 +260,27 @@
           <span class="track" aria-hidden="true"><span class="knob"></span></span>
           <span id="protection-label" aria-hidden="true">Off</span>
         </button>
-        <p id="status-detail">Starting up</p>
-      </section>
+      </header>
 
-      <p id="fps-warning" role="status" hidden></p>
+      <p id="notice" role="status" hidden></p>
 
-      <section aria-labelledby="graph-title">
-        <h2 id="graph-title">Flashes per second, limit 3 (WCAG 2.3.1)</h2>
+      <section aria-labelledby="rate-title">
+        <div class="row">
+          <h2 id="rate-title">Flashes per second</h2>
+          <p id="rate"><strong id="rate-value">0</strong> / sec</p>
+        </div>
         <canvas
           id="graph"
           role="img"
-          aria-label="Scrolling graph of flashes per second over the most affected area of the screen, with a dashed limit line at 3"
+          aria-label="Scrolling graph of flashes per second over the most affected area of the screen, with a dashed line at the flash limit"
         ></canvas>
       </section>
 
-      <section class="thumbs" aria-label="What CalmFrame sees">
-        <figure>
-          <canvas id="raw" aria-label="Raw input thumbnail"></canvas>
-          <figcaption title="The screen under the overlay, as the detector sees it">
-            Raw input (unprotected)
-          </figcaption>
-        </figure>
-        <figure>
-          <div class="preview-box">
-            <canvas id="preview" aria-label="Protected preview thumbnail"></canvas>
-            <span id="preview-idle">Not smoothing: the screen is shown as it is</span>
-          </div>
-          <figcaption title="What you see while CalmFrame smooths the screen">
-            Protected preview
-          </figcaption>
-        </figure>
-      </section>
-
-      <section aria-labelledby="events-title">
-        <div class="events-head">
-          <h2 id="events-title">Flash events</h2>
-          <h2 id="counter"><strong id="counter-value">0</strong> smoothed since start</h2>
-        </div>
-        <ol id="events" aria-label="Flash event log, newest first">
-          <li class="empty">None yet</li>
-        </ol>
-      </section>
-      <section class="control" aria-label="Settings">
+      <section class="controls" aria-label="Settings">
         <div>
-          <div class="title-row">
-            <label id="sensitivity-title" for="sensitivity">Sensitivity</label>
-            <span id="sensitivity-name"></span>
+          <div class="row">
+            <label for="sensitivity">Sensitivity</label>
+            <span id="sensitivity-name" class="value"></span>
           </div>
           <input
             id="sensitivity"
@@ -404,24 +292,19 @@
             aria-describedby="sensitivity-desc"
           />
           <div class="scale" aria-hidden="true"><span>More sensitive</span><span>Strict</span></div>
-          <p id="sensitivity-desc"></p>
+          <span id="sensitivity-desc" class="visually-hidden"></span>
         </div>
         <div>
-          <label class="check">
-            <input id="ignore-movement" type="checkbox" checked aria-describedby="movement-desc" />
-            <span>Ignore movement (recommended)</span>
-          </label>
-          <p class="hint" id="movement-desc">
-            Scrolling and dragging windows don't start smoothing. Untick to count every change, as
-            the detector first did.
-          </p>
+          <div class="row">
+            <label for="flash-limit">Flash limit</label>
+            <span id="flash-limit-name" class="value"></span>
+          </div>
+          <input id="flash-limit" type="range" min="3" max="10" step="1" value="3" />
+          <div class="scale" aria-hidden="true">
+            <span id="flash-limit-min">3</span><span id="flash-limit-max">10</span>
+          </div>
         </div>
       </section>
-
-      <footer>
-        <kbd id="kill-switch"></kbd> switches protection off and on anywhere. Closing this window
-        keeps CalmFrame in the tray.
-      </footer>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

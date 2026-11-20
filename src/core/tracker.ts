@@ -40,12 +40,16 @@ export interface TrackerOptions {
    * has R / (R + G + B) at or above the red ratio (WCAG: "> 20", "R/(R+G+B) >= 0.8").
    */
   kind: 'luminance' | 'red'
+  /** Max gap between transitions for them to extend a streak. Default
+   *  FAST_TRANSITION_INTERVAL_MS, the standard's three flashes a second (Step 5). */
+  fastIntervalMs?: number
 }
 
 export class TransitionTracker {
   readonly cells: number
   private readonly threshold: number
   private readonly isRed: boolean
+  private readonly fastMs: number
   private readonly darkLimit = DARK_LIMIT
   private readonly redRatioLimit = RED_RATIO
 
@@ -102,6 +106,7 @@ export class TransitionTracker {
     this.cells = n
     this.threshold = options.threshold
     this.isRed = options.kind === 'red'
+    this.fastMs = options.fastIntervalMs ?? FAST_TRANSITION_INTERVAL_MS
     this.dir = new Int8Array(n)
     this.ext = new Float64Array(n)
     this.low = new Float64Array(n)
@@ -279,7 +284,7 @@ export class TransitionTracker {
     const gapReset = this.gapReset
     const { flip, lastT, interval, streak, count, ring, ringHead } = this
     const cap = TRACKER_RING_CAPACITY
-    const fastMs = FAST_TRANSITION_INTERVAL_MS
+    const fastMs = this.fastMs
     const windowMs = COUNT_WINDOW_MS
     let transitions = 0
 
