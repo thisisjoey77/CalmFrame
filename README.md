@@ -1,6 +1,6 @@
 # CalmFrame
 
-**Live protection from hazardous screen flashing, in every app on Windows.**
+**Live protection from hazardous screen flashing for people with photosensitive epilepsy, in every app on Windows.**
 
 > **Flashing-content warning.** This project is about strobing images, and its test tools can flash. They open paused, at low contrast and in a small area, and stop on their own after a few seconds.
 
