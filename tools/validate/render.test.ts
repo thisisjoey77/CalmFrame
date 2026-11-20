@@ -120,7 +120,9 @@ describe('offline render: the pipeline', () => {
     // The report still measures against the standard, whatever limit was asked for.
     expect(atSeven.standard.protectedPane).toBeGreaterThan(0)
     expect(atSeven.withSettings.original).toBe(0)
-  })
+    // Two runs of 240 frames: still about 5 s when the whole suite runs in parallel, so
+    // the default 5 s limit ran out now and then. A longer limit, same checks.
+  }, 30_000)
 
   it('follows the sensitivity: strict waits longer than the standard position', () => {
     const standard = run(strobe(3), 120, {}).renderer.summary().firstOverlayFrame as number
