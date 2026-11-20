@@ -1,94 +1,147 @@
 # CalmFrame
 
-> **Flashing-content warning.** This project deals with strobing images. The test tools start paused, at low contrast, with an auto-stop.
+**Live protection from hazardous screen flashing, in every app on Windows.**
+
+> **Flashing-content warning.** This project is about strobing images, and its test tools can flash. They open paused, at low contrast and in a small area, and stop on their own after a few seconds.
+
+**1st place in the Entertainment track and the Coder for Good sponsor prize at EmoryHacks 2026.** The demo video and write-up are on [Devpost](https://devpost.com/software/calmframe).
 
 ## What it is
 
-CalmFrame is a Windows app that watches the whole screen for flashing that breaks the WCAG 2.3.1 flash thresholds. When it finds some, it covers the screen with a smoothed copy within one or two flashes. It works across every app (video players, browsers, games in borderless-windowed mode) and runs entirely offline. It reduces exposure to hazardous flashing. It is not a medical device and does not guarantee anything.
+Flashing light can trigger seizures in people with photosensitive epilepsy: a strobing scene in a film, an explosion in a game, a music video. The web accessibility guidelines set a limit for it (WCAG 2.3.1, "Three Flashes or Below Threshold"): no more than three flashes in any one second that are both bright enough and large enough. Plenty of content breaks that limit, and a viewer can't know what a video or game will show next.
 
-Winner of Entertainment track at Emoryhacks 2026 + Coder for Good Sponsor prize. 
+CalmFrame is a Windows app that watches the whole screen, 60 times a second, for flashing that breaks the WCAG 2.3.1 thresholds. When it finds some, it covers the screen with a calmed copy within one or two flashes. When the flashing stops, the screen goes back to normal on its own. It works across every app at once (browsers, video players, games in borderless-windowed mode), runs entirely offline on the computer's own GPU, and uses no AI: the detector implements a published standard, so every decision can be checked.
 
-## How to run
-
-Requirements: Windows 10 version 2004 or later, or Windows 11; Node.js 22 or later. Building the native capture module also needs Python 3 and the Visual Studio 2022 Build Tools with the "Desktop development with C++" workload.
-
-```sh
-npm install
-npm run native:build  # the native screen capture module (once, and after changing it)
-npm run dev        # run the app
-npm test           # unit tests
-npm run build:win  # packaged installer in dist/
-```
-
-### Using it
-
-CalmFrame runs in the tray and shows a small window at the top right of the screen. The window stays above everything else, and screen recorders can't see it, so film it with a phone.
-
-- **Minimize** puts the window in the taskbar. **Close** hides it to the tray, and protection keeps running: click the tray icon (in the ^ overflow by the clock, unless you pin it) to bring the window back.
-- **Protection switch,** with a small mark beside the name: a tick while CalmFrame watches the screen, a wave while it is smoothing flashing, a slashed ring when protection is off.
-- **Flashes per second** over the most affected part of the screen, as a graph against the limit line and as a number.
-- **Sensitivity.** From "most sensitive" (smooths on the 2nd fast change) through "standard" (the 3rd, the default) and "fewer false alarms" (the 4th) to "strict" (only more flashes in a second than the limit). Hover over the slider for how many flashes of a 10 Hz strobe the spec predicts get through first.
-- **Flash limit** is 3 flashes a second, the WCAG limit, and can be raised as far as 10 to see how content behaves at a looser limit. Above 3, CalmFrame lets through flashing that the WCAG rule counts as a hazard. It goes back to 3 every time CalmFrame starts.
-- **A notice line** appears under the name only when something is wrong: "Not protecting" and the reason, or Keep motion sharp not being available on this computer. The status is worked out again four times a second from the overlay's heartbeat, so it can't get stuck looking protected.
-- **In the tray menu:**
-  - **Ignore movement** (on by default) stops scrolling and dragging windows from starting the smoothing.
-  - **Keep motion sharp (experimental)** (on by default) is how flashing is calmed. Instead of blending recent frames, which leaves trails behind anything that moves, it shows the current picture and steadies the brightness of each region. A thin rim can still flicker where flashing content meets still content. Untick it to blend recent frames instead (the smoothing filter).
-- **Ctrl+Alt+Shift+C** switches protection off and on from anywhere. So do the panel's switch and the tray menu. Protection is always on when CalmFrame starts.
-- Settings are saved in `%APPDATA%\calmframe\settings.json`. To quit, right-click the tray icon and choose **Quit CalmFrame**.
+It reduces exposure to hazardous flashing. It is not a medical device and does not guarantee anything.
 
 ## How it works
 
-_TODO, summarising docs/SPEC.md:_
+A transparent window covers the whole screen, and Windows is told to leave it out of screen capture. So CalmFrame always sees the real screen underneath its own overlay. Without that, it would see its own calmed picture, decide the flashing had stopped, switch off, see the strobe again and switch back on: the fix would flash too. CalmFrame checks this at every start by tinting the overlay red and confirming that the captured picture doesn't change.
 
-- Capture: the primary screen at 60 fps and full resolution, through an overlay window that is excluded from capture. A small C++ module (`native/capture`) uses Windows' Desktop Duplication to copy each new screen frame into a shared GPU texture, which Electron's `sharedTexture` API hands to the overlay without the pixels ever leaving the GPU. If the module is missing or cannot start, CalmFrame falls back to Chromium's screen capture (`CALMFRAME_NATIVE_CAPTURE=0` forces it).
-- Detection: linear-light luminance on a 96×54 grid, a per-cell transition tracker, and the WCAG area rule over a 10° visual field.
-- Mitigation: a per-pixel running average whose strength is solved from the detected flash, plus dimming where smoothing alone can't get under the threshold. An experimental alternative keeps the current frame and scales each region's brightness to that region's running average.
-
-## Measurements
-
-_TODO (Phase 6): flashes reaching the viewer with protection on and off, response time, and residual swing after smoothing._
-
-### Compared against IRIS (Python port)
-
-`tools/validate` runs CalmFrame's detector, the same code as the app, on video files, and compares it second by second with the community Python port of EA's IRIS. Results are in [measurements/iris-comparison.md](measurements/iris-comparison.md).
-
-To reproduce (Windows; Node 22 or later and Python 3.11):
-
-```sh
-python -m venv %USERPROFILE%\.calmframe\iris-venv
-%USERPROFILE%\.calmframe\iris-venv\Scripts\pip install iris-pse-detection==1.1.2 imageio-ffmpeg
-npm run validate:all     # makes the 11 test clips, runs IRIS and CalmFrame, writes the report
+```text
+The real screen
+   │
+   ▼
+Capture          C++ module: Windows Desktop Duplication into a shared GPU texture,
+   │             60 fps at full resolution (fallback: Chromium's screen capture)
+   ▼
+Grid (GPU)       convert to linear light, average down to 96×54 regions
+   │
+   ▼
+Detector         per region: brightness reversals and red flashes; the WCAG area
+   │             rule over a 10° field of view; act on the 3rd fast reversal
+   ▼
+State machine    safe, active or fading out: how strongly to calm and how much to dim
+   │
+   ▼
+Draw (GPU)       only during a hazard: the calmed copy, on the overlay
+   │
+   ▼
+Overlay window   always on top, click-through, invisible to screen capture
 ```
 
-`imageio-ffmpeg` brings its own ffmpeg, so nothing needs installing system-wide. Set `CALMFRAME_FFMPEG` to use another ffmpeg, or `CALMFRAME_IRIS` for another `iris` command. To check one file: `npm run validate -- <video> [--area wcag|iris] [--trigger early|strict] [--extended]`. That writes one CSV row per second to `measurements/validate/`.
+All the per-frame work runs on the GPU inside one process, so frames are never copied between processes.
 
-### Demo footage: the offline render
+- **Detection.** Brightness is measured as relative luminance in linear light, as WCAG defines it. A flash is a pair of opposing changes of at least 0.10 where the darker state is below 0.80, plus WCAG's separate rule for saturated red. It counts only if it covers at least a quarter of a 10° patch of the viewer's field, about 3% of the screen.
+- **Acting early.** WCAG counts flashes over a whole second, so waiting to be sure would let three flashes through. CalmFrame acts on the third fast reversal in a region instead, which lets one or two through. A sensitivity slider moves this between the 2nd reversal, the 4th, and the strict per-second count.
+- **Ignoring movement.** Scrolling and dragging windows also make regions flip between light and dark. A reversal only counts when a quarter of the area around it reverses the same way in the same frame, which stopped ordinary scrolling and window dragging from setting it off in our tests.
+- **Calming.** By default ("Keep motion sharp") CalmFrame shows the current frame and scales each region's brightness toward that region's recent average, so moving things stay sharp. The alternative is a running average of recent frames, its strength solved from the detected flash rate: steadier, but it leaves trails behind moving things. Both aim to keep the leftover swing at 0.07, under WCAG's 0.10, and dim the picture where that isn't enough. Red flashes are also desaturated.
+- **Fails open, and says so.** The overlay reports a heartbeat four times a second. If it stops, the frames go stale or a GPU self-test fails, the overlay is hidden and the app says "Not protecting" instead of leaving a frozen picture on screen.
 
-Screen recorders can't see the overlay, so a recording of CalmFrame at work shows the raw screen. For a clean comparison, `npm run render` works from a video file instead. It runs every frame through the same detection and filter code as the app and writes a 1920×1080 video with the protected picture next to the original:
+The full maths, the derivations and every default value are in [docs/SPEC.md](docs/SPEC.md).
 
-```sh
-npm run render -- myclip.mp4                              # the app's default settings
-npm run render -- myclip.mp4 --keep-motion-sharp on       # the experimental method
-npm run render -- myclip.mp4 --sensitivity strict --flash-limit 5 --ignore-movement off
-npm run render -- myclip.mp4 --layout equal --start 30 --duration 20 --out demo.mp4
-```
+## The app
 
-The options are the app's settings (`--sensitivity 2|3|4|strict`, `--ignore-movement on|off`, `--keep-motion-sharp on|off`, `--flash-limit 3..10`). `--layout` is `big-small` (default), `equal` or `protected-only`. `--game-mode on` tries an experimental third method that the app does not have yet, meant for fast games: it dims flashing in big zones and never lifts it toward white, so the picture stays sharp and coloured but gets darker. The picture has the two labelled pictures and a flashes-per-second graph; `--info full` also writes in the status, the settings used and a line saying the footage is an offline render. `--seen-line on` adds a green line to the graph: the flashes per second in the calmed picture, measured on its pixels, next to the original's bars, so you can see the difference CalmFrame makes. It needs the same ffmpeg as the validator above, and prints a short report of how many seconds were flagged before and after.
+CalmFrame lives in the tray and shows a small window at the top right of the screen, which stays above the overlay:
 
-This is a simulation, not a recording of the live overlay. Say so wherever the footage is shown. As in the app, the first flash or two of each burst still gets through.
+- **Protection switch**, with a mark showing whether it is watching, calming or off.
+- **Flashes per second** over the most affected part of the screen, as a live graph against the limit and as a number.
+- **Sensitivity**, from "most sensitive" through "standard" (the default) to "strict".
+- **Flash limit**: 3 a second, the WCAG limit, by default. It can be raised to 10 to see how content behaves at a looser limit, which lets through flashing that WCAG counts as a hazard. It goes back to 3 every time CalmFrame starts.
+- **A notice line** that appears only when something is wrong.
+
+The tray menu has "Ignore movement" and "Keep motion sharp", and Ctrl+Alt+Shift+C switches protection on and off from anywhere. Protection is always on when CalmFrame starts.
+
+Screen recorders can't see CalmFrame's windows, by design, so footage of it working comes from a phone or from the offline render in `tools/validate`.
+
+## Results
+
+Measured on our demo laptop: Windows 11, 1920×1080 at 60 Hz, integrated AMD Radeon 890M.
+
+| What | Result |
+| --- | --- |
+| Capture rate | 60 fps at full 1920×1080, with the native capture module |
+| Capture to calmed picture drawn | 14 ms median, 19 ms at the 95th percentile. With Chromium's fallback capture: 20.4 and 28.0 ms ([measurements/latency.md](measurements/latency.md)) |
+| Analysis cost per frame | 0.6 to 1.0 ms (median) at 1920×1080 |
+| Leftover brightness swing on a 10 Hz test strobe | 0.070 to 0.074, against WCAG's 0.10 |
+| Second-by-second agreement with IRIS (Python port) | 100% ([measurements/iris-comparison.md](measurements/iris-comparison.md)) |
+| A real 2½-minute anime fight clip, offline | IRIS fails the original (23 failing frames) and passes CalmFrame's output with either calming method |
+| Capture-exclusion self-check | The captured picture changed by 0.000 with the overlay tinted red |
+
+What these numbers don't show:
+
+- The latency comes from the app's own log and leaves out the time the display takes to show the frame. The planned end-to-end measurement, filming the screen at 240 fps, didn't happen during the weekend.
+- The leftover swing was read on one low-contrast burst, three readings.
+- The real-clip test ran offline at 640×360, and the clip isn't in this repo.
 
 ## Limitations
 
-_TODO. Known so far:_
+- The first one or two flashes get through before protection lands, because a single reversal looks the same as a scene cut.
+- Protected video (Netflix and other DRM content) captures as black, so it can't be checked or calmed.
+- Exclusive-fullscreen games may draw above the overlay. Borderless-windowed mode works.
+- Only the primary display is protected, and a rotated display falls back to the slower Chromium capture.
+- Some false alarms remain: very fast scrolling, fast camera turns in games, a tab switch that repaints three times, lightning in video. Each costs a couple of seconds of calmed picture, not a blocked screen.
+- With "Ignore movement" on, a large checkerboard that swaps black and white isn't caught. Static stripe patterns, which IRIS also checks, aren't detected at all.
+- "Keep motion sharp" steadies each region of about 20 pixels, not each pixel: finer detail can still alternate, and a thin rim can flicker where flashing content meets still content. The running average avoids both but leaves motion trails.
+- Slow, full-contrast strobes (around 3 Hz) are the hardest case: they are calmed and dimmed to just under half brightness.
+- Windows only. On macOS, the system's screen capture ignores Electron's capture-exclusion flag, so the overlay would see itself.
 
-- The first one or two flashes pass before protection lands.
-- DRM-protected video captures as black.
-- Exclusive-fullscreen games may sit above the overlay.
-- Screen recorders can't see the overlay or the dashboard. Both are excluded from capture on purpose, so the detector only ever sees the real screen.
-- Only the primary display is protected, and a rotated display is not supported by the native capture (it falls back to Chromium's).
-- With the fallback, Chromium's capture, speed depends on screen resolution and CPU power mode: about 50 fps at a 960×540 cap on our demo laptop, so the smoothed copy is softer, and a ghost cursor can appear in it. The native capture runs at 60 fps at full resolution and leaves the cursor out.
+## What's in this repo
 
-## Credits
+| Path | What |
+| --- | --- |
+| [src/core](src/core) | The detector, filter maths and state machine. Pure TypeScript with no Electron, browser or Node APIs, so the same code runs in the app, the tools and the tests |
+| [src/shared](src/shared) | Every threshold and default value, in one config file, and the status rules |
+| [src/overlay](src/overlay) | The overlay window: capture, the WebGL2 passes and the per-frame loop |
+| [src/main](src/main), [src/preload](src/preload) | The Electron main process: windows, tray, settings and the native module |
+| [src/dashboard](src/dashboard) | The small control window |
+| [native/capture](native/capture) | The C++ capture module: Desktop Duplication into shared Direct3D 11 textures |
+| [tools/strobe](tools/strobe) | A safe strobe test page: opens paused, low contrast and small, and stops itself |
+| [tools/validate](tools/validate) | The IRIS comparison, and the offline render that runs a video through the app's own detector and filter and writes the calmed picture beside the original. The render is a simulation, not a recording of the live overlay |
+| [measurements](measurements) | The IRIS comparison and latency results |
+| [docs/SPEC.md](docs/SPEC.md) | The build spec: research, maths, architecture, defaults, and the plan we built from |
+
+There are 377 unit tests in 31 files (Vitest).
+
+## How we built it
+
+- **Spec first.** The rules allowed planning before Friday 8 PM but no code, so we wrote a full build spec first: the research, the maths, the architecture, every default value, and an acceptance checklist for each phase. Checking it against primary sources changed four things before any code existed. For example, the "obvious" smoothing strength fails the standard, and the area rule is far stricter than we first thought.
+- **Phases.** Seven phases, each with its own branch and checklist: overlay spike, detector core, strobe test page, live detection, the calming overlay, the dashboard, and validation. Then two stretch goals: native capture and "Keep motion sharp". The spec records each phase's measured results and every decision.
+- **AI-assisted, kept honest by tests.** Much of the code was written with [Claude Code](https://claude.com/claude-code), one session per phase, each starting from the spec. The guardrails: the detector core is forced to stay pure (its own TypeScript project, with no DOM or Node types, and a lint rule against Electron and Node imports); every threshold lives in one config file; every GPU pass is checked against a CPU version at startup; and known weaknesses are pinned by tests rather than hidden.
+- **[Entire](https://entire.com/)** captured every coding session and linked each commit to the prompts behind it, so we could search past decisions across two laptops instead of re-deriving them ([docs/ENTIRE-LOG.md](docs/ENTIRE-LOG.md)).
+- **[Coder](https://coder.com/).** Everything that doesn't need the Windows desktop (the detector and its tests, the validator) was tested in a Coder workspace after every push: 19 logged runs ([docs/CODER-LOG.md](docs/CODER-LOG.md)). The overlay itself can't run there.
+- **Two laptops.** A Windows 11 laptop, the only place the app runs, did all the live testing. A Mac took the pure core, the strobe page and the validator until Friday night.
+
+## Team
+
+| Name | GitHub |
+| --- | --- |
+| Kartikeya Jain | [@Apsidals](https://github.com/Apsidals) |
+| Ashley Choi | [@ashleyes](https://github.com/ashleyes) |
+| Joy Kim | [@thisisjoey77](https://github.com/thisisjoey77) |
+| Jack Gardner | |
+
+## Built by us, and what we used
+
+| Built by us | Used as-is |
+| --- | --- |
+| Detector core: transition tracker, area rule, movement rule, filter maths, state machine | Electron, Vite, the electron-vite template and toolkit presets, TypeScript |
+| Overlay capture and GPU pipeline (WebGL2 shaders for the grid, smoothing and brightness correction) | WebGL2 |
+| Native capture module (C++, Desktop Duplication into shared textures) | Electron's `sharedTexture` API, Windows DXGI and Direct3D 11, node-addon-api |
+| Dashboard, tray, settings and the strobe test page | Vitest, ESLint, Prettier, electron-builder |
+| Validator, IRIS comparison, offline render and measurements | IRIS (Python port), for comparison only; FFmpeg |
+
+Credits:
 
 - [Electron](https://www.electronjs.org/): desktop app runtime
 - [electron-vite](https://electron-vite.org/) and its `@quick-start/create-electron` template: build tooling and project scaffold
@@ -98,23 +151,15 @@ _TODO. Known so far:_
 - [Vitest](https://vitest.dev/): unit tests
 - [ESLint](https://eslint.org/) and [Prettier](https://prettier.io/): linting and formatting
 - [electron-builder](https://www.electron.build/): Windows installer
-- WebGL2: GPU analysis and smoothing passes (browser API)
 - Windows DXGI Desktop Duplication and Direct3D 11: native screen capture
 - [node-addon-api](https://github.com/nodejs/node-addon-api) and [node-gyp](https://github.com/nodejs/node-gyp): building the native module
-- [Entire](https://entire.com/): agent session capture, checkpoints and repository hosting
+- [IRIS (Python port, `iris-pse-detection`)](https://pypi.org/project/iris-pse-detection/), based on [EA's IRIS](https://github.com/electronicarts/IRIS): the reference analyzer we compare against (validation only)
+- [FFmpeg](https://ffmpeg.org/), via the [imageio-ffmpeg](https://pypi.org/project/imageio-ffmpeg/) package's bundled build: test clips and decoding for the validator
 - [Claude Code](https://claude.com/claude-code): AI coding assistant used to write much of the code
-- [IRIS (Python port, `iris-pse-detection`)](https://pypi.org/project/iris-pse-detection/), based on [EA's IRIS](https://github.com/electronicarts/IRIS): reference analyzer we compare against (validation only)
-- [FFmpeg](https://ffmpeg.org/), via the [imageio-ffmpeg](https://pypi.org/project/imageio-ffmpeg/) package's bundled build: test clip generation and decoding for the validator
+- [Entire](https://entire.com/): session capture and checkpoints
+- [Coder](https://coder.com/): cloud workspace for the platform-independent tests
 - Standards and research: [W3C WCAG 2.3.1](https://w3c.github.io/wcag21/understanding/three-flashes-or-below-threshold.html), Epilepsy Foundation reviews (Harding et al. 2005, Fisher et al. 2005 and 2022), and [Apple's Video Flashing Reduction paper](https://developer.apple.com/accessibility/downloads/Video-Flashing-Reduction-12.pdf)
 
-## What we built vs what we used
+## License
 
-_TODO: keep this honest and current._
-
-| Built by us | Used as-is |
-| --- | --- |
-| Detector core (transition tracker, area rule, filter math, state machine) | Electron, Vite, electron-vite template and toolkit presets |
-| Overlay capture and GPU pipeline | WebGL2 |
-| Native capture module (C++, Desktop Duplication into shared textures) | Electron's `sharedTexture` API, DXGI and Direct3D 11, node-addon-api |
-| Dashboard, tray, strobe test page | IRIS (Python port), for comparison only |
-| Validator CLI and measurements | FFmpeg |
+MIT. See [LICENSE](LICENSE).
